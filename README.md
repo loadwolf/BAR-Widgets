@@ -1,8 +1,9 @@
-This is the Save and load features i longed for when creating bar layouts, and with a little help from my digital friends- here for your Beyond All Reasoable Pleasure :)
+This is the save and load feature I always wished existed when creating bar layouts. With a little help from my digital friends, it’s finally here for your Beyond All Reasonable Pleasure.
 
-This will load old LayoutPlanner files and allow you to copy and rename them for easier location
+You can now load your old LayoutPlanner files, copy them, and rename them for easier organisation and quick access.
 
-ToDo
-- Add snapping options (Middle of grid square and on grid square
-- Fix search
-- Get feedback and refine
+To-do list
+
+ - Add snapping options (middle of grid square and on-grid alignment)
+ - Fix search
+ - Get feedback and refine

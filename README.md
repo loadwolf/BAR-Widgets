@@ -8,11 +8,7 @@ With a little help from my digital friends, it’s finally here for your Beyond 
 You can now load your old LayoutPlanner files, copy them, and rename them for easier organisation and quick access.
 
 To-do list
- - Get feedback and refine and if worthy roll features into original
- - Exit Button
- - Filter items rise top not bottom 
- - Render speed bug for large shapes
- - move layout around with ASDW keys
+
 
 Done
  - Added scroll bar to Load menu when  box gets full - Done 2025-12-02
@@ -20,3 +16,8 @@ Done
  - Rotate - Done 2025-12-02
  - Add snapping options (middle of grid square and on-grid alignment) - Done 2025-12-02
  - Fix search - Done 2025-12-02
+ -  - Get feedback and refine and if worthy roll features into original - Done 2025-12-02
+ - Exit Button - Done 2025-12-02
+ - Filter items rise top not bottom  - Done 2025-12-02
+ - Render speed bug for large shapes - Done 2025-12-02
+ - move layout around with ASDW keys - Done 2025-12-02

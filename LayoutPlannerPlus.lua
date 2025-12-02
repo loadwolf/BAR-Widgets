@@ -864,8 +864,10 @@ function widget:MousePress(mx, my, button)
     end
 
     -- close button (convert button Y to bottom-up)
+    -- Match rendering calculation exactly
     local btnCloseTopY = loadY + r.btnClose.y  -- Top in top-down
-    local btnCloseBottomY_bu = vsy - (btnCloseTopY + r.btnClose.h)  -- Bottom in bottom-up
+    local btnCloseBottomY = btnCloseTopY + r.btnClose.h  -- Bottom in top-down
+    local btnCloseBottomY_bu = vsy - btnCloseBottomY  -- Bottom in bottom-up
     local btnCloseTopY_bu = vsy - btnCloseTopY  -- Top in bottom-up
     if button == 1 and
        relX >= r.btnClose.x and relX <= r.btnClose.x + r.btnClose.w and
@@ -874,6 +876,83 @@ function widget:MousePress(mx, my, button)
       -- restore drawing state when popup is closed without placement
       drawingMode = wasDrawingBeforeLoad
       return true
+    end
+
+    -- buttons Load/Delete/Duplicate (convert button Y to bottom-up)
+    -- Check buttons FIRST so they get priority over list box
+    if button == 1 then
+      -- Match rendering calculation exactly
+      local btnLoadTopY = loadY + r.btnLoad.y  -- Top in top-down
+      local btnLoadBottomY = btnLoadTopY + r.btnLoad.h  -- Bottom in top-down
+      local btnLoadBottomY_bu = vsy - btnLoadBottomY  -- Bottom in bottom-up
+      local btnLoadTopY_bu = vsy - btnLoadTopY  -- Top in bottom-up
+      if relX >= r.btnLoad.x and relX <= r.btnLoad.x + r.btnLoad.w and
+         my >= btnLoadBottomY_bu and my <= btnLoadTopY_bu then
+        -- select layout; popup closes, preview will be visible via selectedData
+        if selectedIndex and filteredLayouts[selectedIndex] then
+          loadPopupVisible = false
+          -- keep drawing off until placement completes
+        end
+        return true
+      end
+      -- Match rendering calculation exactly
+      local btnDelTopY = loadY + r.btnDel.y  -- Top in top-down
+      local btnDelBottomY = btnDelTopY + r.btnDel.h  -- Bottom in top-down
+      local btnDelBottomY_bu = vsy - btnDelBottomY  -- Bottom in bottom-up
+      local btnDelTopY_bu = vsy - btnDelTopY  -- Top in bottom-up
+      if relX >= r.btnDel.x and relX <= r.btnDel.x + r.btnDel.w and
+         my >= btnDelBottomY_bu and my <= btnDelTopY_bu then
+        if selectedIndex and filteredLayouts[selectedIndex] then
+          local item = filteredLayouts[selectedIndex]
+          if item.filename then
+            os.remove(item.filename)
+          end
+          RefreshSavedLayouts()
+          ApplySearchFilter()
+          selectedIndex = nil
+          selectedData  = nil
+          layoutRotation = 0
+          layoutInverted = false
+        end
+        return true
+      end
+      -- Match rendering calculation exactly
+      local btnDupTopY = loadY + r.btnDup.y  -- Top in top-down
+      local btnDupBottomY = btnDupTopY + r.btnDup.h  -- Bottom in top-down
+      local btnDupBottomY_bu = vsy - btnDupBottomY  -- Bottom in bottom-up
+      local btnDupTopY_bu = vsy - btnDupTopY  -- Top in bottom-up
+      if relX >= r.btnDup.x and relX <= r.btnDup.x + r.btnDup.w and
+         my >= btnDupBottomY_bu and my <= btnDupTopY_bu then
+        if selectedIndex and filteredLayouts[selectedIndex] then
+          local item = filteredLayouts[selectedIndex]
+          if item and item.filename then
+            local f = io.open(item.filename, "r")
+            if f then
+              local text = f:read("*all")
+              f:close()
+              -- find new filename
+              local base = item.filename:gsub("%.txt$", "")
+              local n = 1
+              local newName
+              while true do
+                newName = base .. "_copy" .. n .. ".txt"
+                local t = io.open(newName, "r")
+                if not t then break end
+                t:close()
+                n = n + 1
+              end
+              local nf = io.open(newName, "w")
+              if nf then
+                nf:write(text)
+                nf:close()
+                RefreshSavedLayouts()
+                ApplySearchFilter()
+              end
+            end
+          end
+        end
+        return true
+      end
     end
 
     -- search box focus (we'll just always treat keyboard as updating search when popup visible)
@@ -914,76 +993,6 @@ function widget:MousePress(mx, my, button)
         end
       end
       return true
-    end
-
-    -- buttons Load/Delete/Duplicate (convert button Y to bottom-up)
-    if button == 1 then
-      local btnLoadTopY = loadY + r.btnLoad.y  -- Top in top-down
-      local btnLoadBottomY_bu = vsy - (btnLoadTopY + r.btnLoad.h)  -- Bottom in bottom-up
-      local btnLoadTopY_bu = vsy - btnLoadTopY  -- Top in bottom-up
-      if relX >= r.btnLoad.x and relX <= r.btnLoad.x + r.btnLoad.w and
-         my >= btnLoadBottomY_bu and my <= btnLoadTopY_bu then
-        -- select layout; popup closes, preview will be visible via selectedData
-        if selectedIndex and filteredLayouts[selectedIndex] then
-          loadPopupVisible = false
-          -- keep drawing off until placement completes
-        end
-        return true
-      end
-      local btnDelTopY = loadY + r.btnDel.y  -- Top in top-down
-      local btnDelBottomY_bu = vsy - (btnDelTopY + r.btnDel.h)  -- Bottom in bottom-up
-      local btnDelTopY_bu = vsy - btnDelTopY  -- Top in bottom-up
-      if relX >= r.btnDel.x and relX <= r.btnDel.x + r.btnDel.w and
-         my >= btnDelBottomY_bu and my <= btnDelTopY_bu then
-        if selectedIndex and filteredLayouts[selectedIndex] then
-          local item = filteredLayouts[selectedIndex]
-          if item.filename then
-            os.remove(item.filename)
-          end
-          RefreshSavedLayouts()
-          ApplySearchFilter()
-          selectedIndex = nil
-          selectedData  = nil
-          layoutRotation = 0
-          layoutInverted = false
-        end
-        return true
-      end
-      local btnDupTopY = loadY + r.btnDup.y  -- Top in top-down
-      local btnDupBottomY_bu = vsy - (btnDupTopY + r.btnDup.h)  -- Bottom in bottom-up
-      local btnDupTopY_bu = vsy - btnDupTopY  -- Top in bottom-up
-      if relX >= r.btnDup.x and relX <= r.btnDup.x + r.btnDup.w and
-         my >= btnDupBottomY_bu and my <= btnDupTopY_bu then
-        if selectedIndex and filteredLayouts[selectedIndex] then
-          local item = filteredLayouts[selectedIndex]
-          if item and item.filename then
-            local f = io.open(item.filename, "r")
-            if f then
-              local text = f:read("*all")
-              f:close()
-              -- find new filename
-              local base = item.filename:gsub("%.txt$", "")
-              local n = 1
-              local newName
-              while true do
-                newName = base .. "_copy" .. n .. ".txt"
-                local t = io.open(newName, "r")
-                if not t then break end
-                t:close()
-                n = n + 1
-              end
-              local nf = io.open(newName, "w")
-              if nf then
-                nf:write(text)
-                nf:close()
-                RefreshSavedLayouts()
-                ApplySearchFilter()
-              end
-            end
-          end
-        end
-        return true
-      end
     end
 
     -- while popup is open, block clicks from reaching world/drawing logic
@@ -1735,7 +1744,7 @@ function widget:DrawScreen()
       gl.Color(1,1,1,1)
       local tw = gl.GetTextWidth(label) * 11
       local tx = loadX + b.x + (b.w - tw)/2
-      local ty = vsy - (btnTopY + b.h - 4)  -- Convert text Y to bottom-up (centered vertically in button)
+      local ty = vsy - (btnTopY + b.h - 8)  -- Convert text Y to bottom-up (moved higher in button)
       gl.Text(label, tx, ty, 11, "")
     end
     drawBtn(r.btnLoad,  "Load")

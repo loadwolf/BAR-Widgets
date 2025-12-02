@@ -17,6 +17,7 @@ end
 local Spring = Spring
 local gl     = gl
 local GL     = GL
+local widgetHandler = widgetHandler
 
 local BU_SIZE     = 16         -- 1 BU = 16 game units
 local HALF_BU     = BU_SIZE/2
@@ -77,12 +78,22 @@ local saveNameText     = ""
 -- Line snap modes: 0=none, 1=intersections, 2=midpoints, 3=thirds
 local lineSnapMode     = 1      -- default to intersections
 
+-- Rendering queue (for gradual rendering to avoid lag)
+local drawLineQueue    = {}
+local renderTimer      = 0
+local renderingToGame  = false
+
+-- WASD key translation
+local allowTranslationByKeys = true  -- Whether layout can be shifted using keyboard keys
+
 -- Library / saved layouts
 local savedLayouts     = {}     -- { { name, tags, filename, data }, ... }
 local filteredLayouts  = {}
+local exitButtonClicked = false  -- Prevent exit button message spam
 local selectedIndex    = nil    -- index into filteredLayouts
 local selectedData     = nil    -- layout table of selected
 local searchText       = ""
+local listScrollOffset = 0      -- scroll offset for layout list (in items)
 
 -- Layout transformation state (for selected layout preview/placement)
 local layoutRotation   = 0      -- rotation angle in degrees (0, 90, 180, 270)
@@ -106,8 +117,8 @@ local loadX, loadY     = 200, 220
 local loadDragging     = false
 local loadDragDX, loadDragDY = 0, 0
 local LOAD_TITLE_H     = 24
-local LOAD_WIDTH       = 460
-local LOAD_HEIGHT      = 260
+local LOAD_WIDTH       = 520
+local LOAD_HEIGHT      = 400
 
 --------------------------------------------------------------------------------
 -- Coordinate helpers
@@ -204,6 +215,54 @@ local function AddLineBU(x1, z1, x2, z2)
     x1, z1, x2, z2 = x2, z2, x1, z1
   end
   currentLayout.lines[#currentLayout.lines + 1] = { x1, z1, x2, z2 }
+end
+
+-- Translate layout (for WASD movement)
+local function TranslateLayout(dx, dz)
+  -- Translate buildings
+  for size, group in pairs(currentLayout.buildings) do
+    for _, pos in ipairs(group) do
+      pos[1] = pos[1] + dx
+      pos[2] = pos[2] + dz
+    end
+  end
+  -- Translate lines
+  for _, line in ipairs(currentLayout.lines) do
+    line[1] = line[1] + dx
+    line[3] = line[3] + dx
+    line[2] = line[2] + dz
+    line[4] = line[4] + dz
+  end
+end
+
+-- Get snapped camera direction (for WASD movement)
+local function GetSnappedCameraDirection(dx, dz)
+  if dx == 0 and dz == 0 then
+    return 0, 0
+  end
+
+  local inputLen = math.sqrt(dx * dx + dz * dz)
+  dx = dx / inputLen
+  dz = dz / inputLen
+
+  local dirX, _, dirZ = Spring.GetCameraDirection()
+  local camLen = math.sqrt(dirX * dirX + dirZ * dirZ)
+  if camLen < 0.0001 then
+    return 0, 0
+  end
+
+  local forwardX = dirX / camLen
+  local forwardZ = dirZ / camLen
+  local rightX = -forwardZ
+  local rightZ = forwardX
+
+  local worldDX = dx * rightX + dz * forwardX
+  local worldDZ = dx * rightZ + dz * forwardZ
+
+  local tx = math.floor(worldDX + 0.5)
+  local tz = math.floor(worldDZ + 0.5)
+
+  return tx, tz
 end
 
 --------------------------------------------------------------------------------
@@ -364,11 +423,23 @@ end
 local function LoadLayoutData(raw)
   -- raw: table returned from layout file (may be old or new)
   local layout = CopyEmptyLayout()
-  if not raw or type(raw) ~= "table" or type(raw.layout) ~= "table" then
+  if not raw or type(raw) ~= "table" then
+    Spring.Echo("[LayoutPlus] LoadLayoutData: raw is not a table")
     return layout
   end
-
+  
+  -- Check if it's a legacy format (layout data directly in raw) or new format (raw.layout)
   local l = raw.layout
+  if not l or type(l) ~= "table" then
+    -- Legacy format might have layout data directly in raw
+    if raw.buildings or raw.lines then
+      l = raw
+      Spring.Echo("[LayoutPlus] LoadLayoutData: Using legacy format (layout data in root)")
+    else
+      Spring.Echo("[LayoutPlus] LoadLayoutData: No layout data found")
+      return layout
+    end
+  end
 
   -- buildings
   if type(l.buildings) == "table" then
@@ -411,6 +482,10 @@ local function RefreshSavedLayouts()
           end
           local tags = raw.tags or {}
           local layout = LoadLayoutData(raw)
+          -- Store width/height from file for proper centering
+          layout.fileWidth = raw.width
+          layout.fileHeight = raw.height
+          layout.fileMinSize = raw.minSize
           savedLayouts[#savedLayouts+1] = {
             name     = name,
             tags     = tags,
@@ -425,6 +500,7 @@ local function RefreshSavedLayouts()
 
     -- 2) Legacy layouts in main Widgets folder: layout_*.txt
     local legacy = VFS.DirList("LuaUI/Widgets/", "layout_*.txt", VFS.RAW_FIRST)
+    Spring.Echo("[LayoutPlus] Found " .. #(legacy or {}) .. " legacy layout files")
     for _, full in ipairs(legacy or {}) do
       -- Skip if already in savedLayouts list
       local already = false
@@ -436,24 +512,47 @@ local function RefreshSavedLayouts()
       end
       if not already then
         local short = full:match("([^/\\]+)$") or full
-        local chunk, err = loadfile(full)
-        if chunk then
+        -- Skip config files (not layout files)
+        if short:match("config") then
+          -- Silently skip config files
+        else
+          local chunk, err = loadfile(full)
+          if chunk then
           local ok, raw = pcall(chunk)
           if ok and type(raw) == "table" then
             local baseName = short:gsub("%.txt$", ""):gsub("_", " ")
             local name = (raw.name and raw.name ~= "") and raw.name or (baseName .. " (legacy)")
             local tags = raw.tags or {}
             local layout = LoadLayoutData(raw)
+            -- Store width/height from file for proper centering (legacy files have normalized coords)
+            layout.fileWidth = raw.width
+            layout.fileHeight = raw.height
+            layout.fileMinSize = raw.minSize
+            -- Debug: check if layout has data
+            local lineCount = #(layout.lines or {})
+            local buildingCount = 0
+            for _, group in pairs(layout.buildings or {}) do
+              buildingCount = buildingCount + #(group or {})
+            end
+            Spring.Echo("[LayoutPlus] Loaded legacy: " .. name .. " (" .. lineCount .. " lines, " .. buildingCount .. " buildings, size " .. (raw.width or "?") .. "x" .. (raw.height or "?") .. ")")
             savedLayouts[#savedLayouts+1] = {
               name     = name,
               tags     = tags,
               filename = full,
               data     = layout,
             }
+          else
+            -- File executed but didn't return a table (might be empty or invalid format)
+            if not ok then
+              Spring.Echo("[LayoutPlus] legacy file error executing " .. short .. ": " .. tostring(raw))
+            else
+              Spring.Echo("[LayoutPlus] legacy file " .. short .. " did not return a table (got " .. type(raw) .. ")")
+            end
           end
-        else
-          Spring.Echo("[LayoutPlus] legacy loadfile error: " .. tostring(err))
-        end
+          else
+            Spring.Echo("[LayoutPlus] legacy loadfile error: " .. tostring(err))
+          end
+        end -- end config file skip check
       end
     end
   end
@@ -463,6 +562,9 @@ local function RefreshSavedLayouts()
 end
 
 local function ApplySearchFilter()
+  -- Reset scroll when filter changes
+  listScrollOffset = 0
+  
   if searchText == "" then
     filteredLayouts = savedLayouts
     return
@@ -708,15 +810,17 @@ end
 
 local function LoadPopupRegions()
   -- relative coords inside popup
-  -- Close button moved to top-right corner, not in title bar
+  -- Note: loadY is the TOP of the window, Y increases downward
+  -- Title bar is at the BOTTOM (loadY + LOAD_HEIGHT - LOAD_TITLE_H)
   return {
     searchBox = { x = 10, y = LOAD_HEIGHT - LOAD_TITLE_H - 30, w = 180, h = 20 },
     listBox   = { x = 10, y = 10, w = 200, h = LOAD_HEIGHT - LOAD_TITLE_H - 50 },
-    thumbBox  = { x = 220, y = 50, w = 200, h = 200 },
-    btnLoad   = { x = 220, y = 10, w = 60,  h = 24 },
+    thumbBox  = { x = 220, y = 40, w = 280, h = 290 },  -- Larger thumbnail, starts below buttons
+    -- Position buttons at TOP of window (same Y as listBox start, but on right side)
+    btnLoad   = { x = 220, y = 10, w = 60,  h = 24 },  -- Same Y as listBox top
     btnDel    = { x = 285, y = 10, w = 60,  h = 24 },
     btnDup    = { x = 350, y = 10, w = 60,  h = 24 },
-    btnClose  = { x = LOAD_WIDTH - 70, y = 2, w = 60, h = 20 }  -- Top-right, not in title bar
+    btnClose  = { x = LOAD_WIDTH - 70, y = 10, w = 60, h = 20 }
   }
 end
 
@@ -743,21 +847,29 @@ function widget:MousePress(mx, my, button)
   -- Handle load popup first
   if loadPopupVisible then
     local relX = mx - loadX
-    local relY = my - loadY
+    -- Mouse Y is in bottom-up coordinates, convert loadY (top-down) to bottom-up for comparison
+    local vsx, vsy = gl.GetViewSizes()
+    local loadY_bu = vsy - (loadY + LOAD_HEIGHT)  -- Bottom of window in bottom-up
+    local relY_bu = my - loadY_bu  -- Mouse Y relative to bottom of window (bottom-up)
     local r = LoadPopupRegions()
 
-    -- drag popup by title bar
+    -- drag popup by title bar (at bottom of window in top-down, top in bottom-up)
+    local titleBarTop_bu = vsy - loadY  -- Top of title bar in bottom-up
+    local titleBarBottom_bu = vsy - (loadY + LOAD_TITLE_H)  -- Bottom of title bar in bottom-up
     if button == 1 and relX >= 0 and relX <= LOAD_WIDTH and
-       relY >= LOAD_HEIGHT - LOAD_TITLE_H and relY <= LOAD_HEIGHT then
+       my >= titleBarBottom_bu and my <= titleBarTop_bu then
       loadDragging = true
-      loadDragDX, loadDragDY = mx - loadX, my - loadY
+      loadDragDX, loadDragDY = mx - loadX, my - loadY_bu
       return true
     end
 
-    -- close button
+    -- close button (convert button Y to bottom-up)
+    local btnCloseTopY = loadY + r.btnClose.y  -- Top in top-down
+    local btnCloseBottomY_bu = vsy - (btnCloseTopY + r.btnClose.h)  -- Bottom in bottom-up
+    local btnCloseTopY_bu = vsy - btnCloseTopY  -- Top in bottom-up
     if button == 1 and
        relX >= r.btnClose.x and relX <= r.btnClose.x + r.btnClose.w and
-       relY >= r.btnClose.y and relY <= r.btnClose.y + r.btnClose.h then
+       my >= btnCloseBottomY_bu and my <= btnCloseTopY_bu then
       loadPopupVisible = false
       -- restore drawing state when popup is closed without placement
       drawingMode = wasDrawingBeforeLoad
@@ -765,19 +877,37 @@ function widget:MousePress(mx, my, button)
     end
 
     -- search box focus (we'll just always treat keyboard as updating search when popup visible)
-    -- list click
+    -- list click (convert list box Y to bottom-up)
+    local listBoxTopY = loadY + r.listBox.y  -- Top in top-down
+    local listBoxBottomY_bu = vsy - (listBoxTopY + r.listBox.h)  -- Bottom in bottom-up
+    local listBoxTopY_bu = vsy - listBoxTopY  -- Top in bottom-up
     if button == 1 and
        relX >= r.listBox.x and relX <= r.listBox.x + r.listBox.w and
-       relY >= r.listBox.y and relY <= r.listBox.y + r.listBox.h then
+       my >= listBoxBottomY_bu and my <= listBoxTopY_bu then
       local idx = #filteredLayouts
       if idx > 0 then
-        -- rough row calc
+        -- Check if clicking on scrollbar
+        local maxVisible = 18
+        local hasScrollbar = idx > maxVisible
+        local scrollBarW = 8
+        local scrollBarX = r.listBox.x + r.listBox.w - scrollBarW - 2
+        if hasScrollbar and relX >= scrollBarX then
+          -- Clicked on scrollbar - could implement drag scrolling here if needed
+          return true
+        end
+        
+        -- Calculate clicked row (account for scroll offset, using bottom-up coordinates)
+        -- Items are rendered from top to bottom, top has highest Y in bottom-up
         local rowH = 18
-        local localY = relY - r.listBox.y
-        local row = math.floor(localY / rowH) + 1
-        if row >= 1 and row <= idx then
-          selectedIndex = row
-          selectedData  = filteredLayouts[row].data
+        local localY_fromTop = listBoxTopY_bu - my  -- Distance from top of list box (bottom-up, positive = down)
+        local displayRow = math.floor(localY_fromTop / rowH)  -- 0-based from top
+        local actualRow = listScrollOffset + displayRow + 1  -- Convert to 1-based index
+        if actualRow < 1 then actualRow = 1 end
+        if actualRow > idx then actualRow = idx end
+        
+        if actualRow >= 1 and actualRow <= idx then
+          selectedIndex = actualRow
+          selectedData  = filteredLayouts[actualRow].data
           -- Reset transformation when selecting a new layout
           layoutRotation = 0
           layoutInverted = false
@@ -786,10 +916,13 @@ function widget:MousePress(mx, my, button)
       return true
     end
 
-    -- buttons Load/Delete/Duplicate
+    -- buttons Load/Delete/Duplicate (convert button Y to bottom-up)
     if button == 1 then
+      local btnLoadTopY = loadY + r.btnLoad.y  -- Top in top-down
+      local btnLoadBottomY_bu = vsy - (btnLoadTopY + r.btnLoad.h)  -- Bottom in bottom-up
+      local btnLoadTopY_bu = vsy - btnLoadTopY  -- Top in bottom-up
       if relX >= r.btnLoad.x and relX <= r.btnLoad.x + r.btnLoad.w and
-         relY >= r.btnLoad.y and relY <= r.btnLoad.y + r.btnLoad.h then
+         my >= btnLoadBottomY_bu and my <= btnLoadTopY_bu then
         -- select layout; popup closes, preview will be visible via selectedData
         if selectedIndex and filteredLayouts[selectedIndex] then
           loadPopupVisible = false
@@ -797,8 +930,11 @@ function widget:MousePress(mx, my, button)
         end
         return true
       end
+      local btnDelTopY = loadY + r.btnDel.y  -- Top in top-down
+      local btnDelBottomY_bu = vsy - (btnDelTopY + r.btnDel.h)  -- Bottom in bottom-up
+      local btnDelTopY_bu = vsy - btnDelTopY  -- Top in bottom-up
       if relX >= r.btnDel.x and relX <= r.btnDel.x + r.btnDel.w and
-         relY >= r.btnDel.y and relY <= r.btnDel.y + r.btnDel.h then
+         my >= btnDelBottomY_bu and my <= btnDelTopY_bu then
         if selectedIndex and filteredLayouts[selectedIndex] then
           local item = filteredLayouts[selectedIndex]
           if item.filename then
@@ -813,8 +949,11 @@ function widget:MousePress(mx, my, button)
         end
         return true
       end
+      local btnDupTopY = loadY + r.btnDup.y  -- Top in top-down
+      local btnDupBottomY_bu = vsy - (btnDupTopY + r.btnDup.h)  -- Bottom in bottom-up
+      local btnDupTopY_bu = vsy - btnDupTopY  -- Top in bottom-up
       if relX >= r.btnDup.x and relX <= r.btnDup.x + r.btnDup.w and
-         relY >= r.btnDup.y and relY <= r.btnDup.y + r.btnDup.h then
+         my >= btnDupBottomY_bu and my <= btnDupTopY_bu then
         if selectedIndex and filteredLayouts[selectedIndex] then
           local item = filteredLayouts[selectedIndex]
           if item and item.filename then
@@ -881,6 +1020,7 @@ function widget:MousePress(mx, my, button)
         wasDrawingBeforeLoad = drawingMode
         drawingMode = false
         loadPopupVisible = true
+        listScrollOffset = 0  -- Reset scroll when opening popup
         RefreshSavedLayouts()
         ApplySearchFilter()
       else
@@ -889,38 +1029,81 @@ function widget:MousePress(mx, my, button)
       return true
     end
     if MainButtonHit(mx, my, btns.render.x, btns.render.y, BTN_W, BTN_H) then
-      -- render currentLayout as markers (buildings + lines)
-      Spring.Echo("[LayoutPlus] Render button clicked")
+      -- render currentLayout as markers using queue (gradual rendering)
+      Spring.Echo("[LayoutPlus] Render button clicked - queuing lines for rendering")
       local lineCount = #currentLayout.lines
       local buildingCount = 0
       for size, group in pairs(currentLayout.buildings) do
         buildingCount = buildingCount + #group
       end
-      Spring.Echo("[LayoutPlus] Rendering: " .. lineCount .. " lines, " .. buildingCount .. " buildings")
-      -- Render buildings as edge lines
+      Spring.Echo("[LayoutPlus] Queuing: " .. lineCount .. " lines, " .. buildingCount .. " buildings")
+      
+      -- Helper function to validate coordinates
+      local function IsValidCoord(v)
+        return v and type(v) == "number" and v == v and math.abs(v) < 1e6
+      end
+      
+      -- Helper function to safely convert and validate world coords
+      local function SafeBUToWorld(bx, bz)
+        if not IsValidCoord(bx) or not IsValidCoord(bz) then
+          return nil, nil
+        end
+        local x, z = BUToWorld(bx, bz)
+        if not IsValidCoord(x) or not IsValidCoord(z) then
+          return nil, nil
+        end
+        return x, z
+      end
+      
+      -- Clear old queue
+      drawLineQueue = {}
+      
+      -- Queue buildings as edge lines
       for size, group in pairs(currentLayout.buildings) do
-        for _, pos in ipairs(group) do
-          local bx, bz = pos[1], pos[2]
-          local x1, z1 = BUToWorld(bx, bz)
-          local x2, z2 = BUToWorld(bx + size, bz)
-          local x3, z3 = BUToWorld(bx + size, bz + size)
-          local x4, z4 = BUToWorld(bx, bz + size)
-          local y = Spring.GetGroundHeight((x1+x3)/2, (z1+z3)/2)
-          -- Draw 4 edges of building
-          Spring.MarkerAddLine(x1, y, z1, x2, y, z2)
-          Spring.MarkerAddLine(x2, y, z2, x3, y, z3)
-          Spring.MarkerAddLine(x3, y, z3, x4, y, z4)
-          Spring.MarkerAddLine(x4, y, z4, x1, y, z1)
+        if IsValidCoord(size) and size > 0 then
+          for _, pos in ipairs(group) do
+            if pos and type(pos) == "table" and #pos >= 2 then
+              local bx, bz = pos[1], pos[2]
+              local x1, z1 = SafeBUToWorld(bx, bz)
+              local x2, z2 = SafeBUToWorld(bx + size, bz)
+              local x3, z3 = SafeBUToWorld(bx + size, bz + size)
+              local x4, z4 = SafeBUToWorld(bx, bz + size)
+              
+              if x1 and z1 and x2 and z2 and x3 and z3 and x4 and z4 then
+                local y = Spring.GetGroundHeight((x1+x3)/2, (z1+z3)/2)
+                if IsValidCoord(y) then
+                  -- Queue 4 edges of building
+                  table.insert(drawLineQueue, {startX = x1, startZ = z1, endX = x2, endZ = z2, y = y})
+                  table.insert(drawLineQueue, {startX = x2, startZ = z2, endX = x3, endZ = z3, y = y})
+                  table.insert(drawLineQueue, {startX = x3, startZ = z3, endX = x4, endZ = z4, y = y})
+                  table.insert(drawLineQueue, {startX = x4, startZ = z4, endX = x1, endZ = z1, y = y})
+                end
+              end
+            end
+          end
         end
       end
-      -- Render lines
+      
+      -- Queue lines
       for _, ln in ipairs(currentLayout.lines) do
-        local x1, z1 = BUToWorld(ln[1], ln[2])
-        local x2, z2 = BUToWorld(ln[3], ln[4])
-        local y = Spring.GetGroundHeight((x1+x2)/2, (z1+z2)/2)
-        Spring.MarkerAddLine(x1, y, z1, x2, y, z2)
+        if ln and type(ln) == "table" and #ln >= 4 then
+          local x1, z1 = SafeBUToWorld(ln[1], ln[2])
+          local x2, z2 = SafeBUToWorld(ln[3], ln[4])
+          
+          if x1 and z1 and x2 and z2 then
+            if x1 ~= x2 or z1 ~= z2 then
+              local y = Spring.GetGroundHeight((x1+x2)/2, (z1+z2)/2)
+              if IsValidCoord(y) then
+                table.insert(drawLineQueue, {startX = x1, startZ = z1, endX = x2, endZ = z2, y = y})
+              end
+            end
+          end
+        end
       end
-      Spring.Echo("[LayoutPlus] Rendered current layout as markers")
+      
+      Spring.Echo("[LayoutPlus] Queued " .. #drawLineQueue .. " lines for gradual rendering")
+      renderingToGame = true
+      renderTimer = 0
       return true
     end
   end
@@ -945,6 +1128,27 @@ function widget:MousePress(mx, my, button)
     end
   end
 
+  -- Exit button click (in title bar)
+  if button == 1 and HitInMain(mx, my) then
+    local lx, ly = mx - mainX, my - mainY
+    local contentH = MAIN_TITLE_H + 10 + BTN_H + 8 + BTN_H + 10 + 20 + 5
+    local h        = contentH + MAIN_PADDING * 2
+    local exitBtnX = MAIN_WIDTH - 24
+    local exitBtnY = h - MAIN_TITLE_H + 2
+    if lx >= exitBtnX and lx <= exitBtnX + 20 and
+       ly >= exitBtnY and ly <= exitBtnY + 20 then
+      -- Disable widget (user can re-enable via F11 menu)
+      if not exitButtonClicked then
+        exitButtonClicked = true
+        Spring.Echo("[LayoutPlus] Widget disabled. Re-enable via F11 menu.")
+        if widgetHandler and widgetHandler.RemoveWidget then
+          widgetHandler:RemoveWidget(widget)
+        end
+      end
+      return true
+    end
+  end
+
   -- main window drag (only title bar or empty edges, after button handling)
   if button == 1 and HitInMain(mx, my) then
     local lx, ly = mx - mainX, my - mainY
@@ -955,7 +1159,12 @@ function widget:MousePress(mx, my, button)
     local edgeMargin = 5
     local onEdge = (lx <= edgeMargin or lx >= MAIN_WIDTH - edgeMargin or
                     ly <= edgeMargin or ly >= h - edgeMargin)
-    if onTitleBar or onEdge then
+    -- Don't drag if clicking exit button
+    local exitBtnX = MAIN_WIDTH - 24
+    local exitBtnY = h - MAIN_TITLE_H + 2
+    local onExitBtn = (lx >= exitBtnX and lx <= exitBtnX + 20 and
+                       ly >= exitBtnY and ly <= exitBtnY + 20)
+    if (onTitleBar or onEdge) and not onExitBtn then
       mainDragging = true
       mainDragDX, mainDragDY = mx - mainX, my - mainY
       return true
@@ -968,19 +1177,53 @@ function widget:MousePress(mx, my, button)
     if pos then
       local bx, bz = WorldToBU(pos[1], pos[3])
       local layout = selectedData
-      local minX, maxX, minZ, maxZ = ComputeBounds(layout)
-      if minX then
-        local cx = (minX + maxX)/2
-        local cz = (minZ + maxZ)/2
-        -- copy buildings as line edges (with transformation)
+      -- Use file width/height if available (for legacy files with normalized coords)
+      -- Otherwise compute bounds from actual coordinates
+      local cx, cz
+      if layout.fileWidth and layout.fileHeight then
+        -- Legacy format: coordinates are normalized (start at 0,0), use file dimensions for centering
+        local minSize = layout.fileMinSize or 1
+        cx = math.floor((layout.fileWidth + minSize) / 2)
+        cz = math.floor((layout.fileHeight + minSize) / 2)
+      else
+        -- New format: compute bounds from actual coordinates
+        local minX, maxX, minZ, maxZ = ComputeBounds(layout)
+        if not minX then return false end
+        cx = (minX + maxX)/2
+        cz = (minZ + maxZ)/2
+      end
+      if cx and cz then
+        -- Calculate translation offset (like original LayoutPlanner)
+        -- For legacy: shift = (width + minSize)/2, translate by (bx - shift, bz - shift)
+        -- For new: shift = center, translate by (bx - shift, bz - shift)
+        local shiftX, shiftZ
+        if layout.fileWidth and layout.fileHeight then
+          -- Legacy format: use file dimensions
+          local minSize = layout.fileMinSize or 1
+          shiftX = math.floor((layout.fileWidth + minSize) / 2)
+          shiftZ = math.floor((layout.fileHeight + minSize) / 2)
+        else
+          -- New format: use computed center
+          shiftX = cx
+          shiftZ = cz
+        end
+        
+        -- copy buildings as line edges (with transformation and translation)
         for size, group in pairs(layout.buildings) do
           for _, posBU in ipairs(group) do
-            -- Transform relative to center
-            local relX1, relZ1 = TransformBU(posBU[1] - cx, posBU[2] - cz, layoutRotation, layoutInverted)
-            local relX2, relZ2 = TransformBU(posBU[1] - cx + size, posBU[2] - cz, layoutRotation, layoutInverted)
-            local relX3, relZ3 = TransformBU(posBU[1] - cx + size, posBU[2] - cz + size, layoutRotation, layoutInverted)
-            local relX4, relZ4 = TransformBU(posBU[1] - cx, posBU[2] - cz + size, layoutRotation, layoutInverted)
-            -- Translate to cursor position (center of layout at cursor)
+            -- First translate to cursor-relative position (like original LayoutPlanner)
+            local tx1, tz1 = posBU[1] + (bx - shiftX), posBU[2] + (bz - shiftZ)
+            local tx2, tz2 = posBU[1] + size + (bx - shiftX), posBU[2] + (bz - shiftZ)
+            local tx3, tz3 = posBU[1] + size + (bx - shiftX), posBU[2] + size + (bz - shiftZ)
+            local tx4, tz4 = posBU[1] + (bx - shiftX), posBU[2] + size + (bz - shiftZ)
+            
+            -- Then apply rotation/inversion relative to the placed center (bx, bz)
+            local relX1, relZ1 = TransformBU(tx1 - bx, tz1 - bz, layoutRotation, layoutInverted)
+            local relX2, relZ2 = TransformBU(tx2 - bx, tz2 - bz, layoutRotation, layoutInverted)
+            local relX3, relZ3 = TransformBU(tx3 - bx, tz3 - bz, layoutRotation, layoutInverted)
+            local relX4, relZ4 = TransformBU(tx4 - bx, tz4 - bz, layoutRotation, layoutInverted)
+            
+            -- Final position
             local sx1, sz1 = relX1 + bx, relZ1 + bz
             local sx2, sz2 = relX2 + bx, relZ2 + bz
             local sx3, sz3 = relX3 + bx, relZ3 + bz
@@ -991,12 +1234,17 @@ function widget:MousePress(mx, my, button)
             AddLineBU(sx4, sz4, sx1, sz1)
           end
         end
-        -- copy layout lines (with transformation)
+        -- copy layout lines (with transformation and translation)
         for _, ln in ipairs(layout.lines) do
-          -- Transform relative to center
-          local relX1, relZ1 = TransformBU(ln[1] - cx, ln[2] - cz, layoutRotation, layoutInverted)
-          local relX2, relZ2 = TransformBU(ln[3] - cx, ln[4] - cz, layoutRotation, layoutInverted)
-          -- Translate to cursor position (center of layout at cursor)
+          -- First translate to cursor-relative position
+          local tx1, tz1 = ln[1] + (bx - shiftX), ln[2] + (bz - shiftZ)
+          local tx2, tz2 = ln[3] + (bx - shiftX), ln[4] + (bz - shiftZ)
+          
+          -- Then apply rotation/inversion relative to the placed center (bx, bz)
+          local relX1, relZ1 = TransformBU(tx1 - bx, tz1 - bz, layoutRotation, layoutInverted)
+          local relX2, relZ2 = TransformBU(tx2 - bx, tz2 - bz, layoutRotation, layoutInverted)
+          
+          -- Final position
           local sx1, sz1 = relX1 + bx, relZ1 + bz
           local sx2, sz2 = relX2 + bx, relZ2 + bz
           AddLineBU(sx1, sz1, sx2, sz2)
@@ -1188,12 +1436,50 @@ function widget:KeyPress(key, mods, isRepeat)
     end
   end
 
+  -- WASD key translation (when enabled and not in dialogs)
+  if allowTranslationByKeys and not showSaveDialog and not loadPopupVisible and not selectedData then
+    local dx, dz = 0, 0
+    
+    if key == 119 then dz = dz + 1 end -- W
+    if key == 115 then dz = dz - 1 end -- S
+    if key == 97  then dx = dx - 1 end -- A
+    if key == 100 then dx = dx + 1 end -- D
+    
+    if dx ~= 0 or dz ~= 0 then
+      local tx, tz = GetSnappedCameraDirection(dx, dz)
+      if tx ~= 0 or tz ~= 0 then
+        TranslateLayout(tx, tz)
+        Spring.Echo("[LayoutPlus] Translated layout by (" .. tx .. ", " .. tz .. ")")
+        return true
+      end
+    end
+  end
+
   if key == 306 then -- CTRL
     ctrlMode = true
   elseif key == 308 then -- ALT
     altMode = true
   end
 
+  return false
+end
+
+function widget:MouseWheel(up, value)
+  if loadPopupVisible then
+    local maxVisible = 18  -- Match the display maxVisible
+    local totalItems = #filteredLayouts
+    local maxScroll = math.max(0, totalItems - maxVisible)
+    
+    -- Mouse wheel: reverse the logic to match user expectation
+    -- When user scrolls "up" (wheel away), they want to see items higher in the list (decrease offset)
+    -- When user scrolls "down" (wheel toward), they want to see items lower in the list (increase offset)
+    if not up then  -- Reversed: "not up" means scroll up in the list
+      listScrollOffset = math.max(0, listScrollOffset - 1)
+    else  -- "up" means scroll down in the list
+      listScrollOffset = math.min(maxScroll, listScrollOffset + 1)
+    end
+    return true
+  end
   return false
 end
 
@@ -1225,6 +1511,14 @@ function widget:DrawScreen()
 
   gl.Color(1, 0.7, 0.2, 1)
   gl.Text("LayoutPlannerPlus", mainX + 8, mainY + h - MAIN_TITLE_H + 4, 14, "")
+  
+  -- Exit button in title bar (top-right)
+  local exitBtnX = mainX + MAIN_WIDTH - 24
+  local exitBtnY = mainY + h - MAIN_TITLE_H + 2
+  gl.Color(0.6, 0.2, 0.2, 0.9)
+  gl.Rect(exitBtnX, exitBtnY, exitBtnX + 20, exitBtnY + 20)
+  gl.Color(1, 1, 1, 1)
+  gl.Text("×", exitBtnX + 6, exitBtnY + 2, 16, "")
 
   local btns = MainButtonsLayout()
   -- draw buttons
@@ -1279,53 +1573,169 @@ function widget:DrawScreen()
 
   -- hint text
   gl.Color(1,1,1,0.8)
-  gl.Text("LMB Lines, RMB remove", mainX + 10, mainY + 10, 11, "")
+  local hintText = "LMB Lines, RMB remove | WASD: move placed layout"
+  gl.Text(hintText, mainX + 10, mainY + 10, 11, "")
 
   -- load popup
   if loadPopupVisible then
+    -- Get viewport size for coordinate conversion (Spring uses bottom-up coordinates)
+    local vsx, vsy = gl.GetViewSizes()
+    
+    -- Window background (convert to bottom-up)
     gl.Color(0,0,0,0.8)
-    gl.Rect(loadX, loadY, loadX + LOAD_WIDTH, loadY + LOAD_HEIGHT)
+    local winY1 = vsy - (loadY + LOAD_HEIGHT)
+    local winY2 = vsy - loadY
+    gl.Rect(loadX, winY1, loadX + LOAD_WIDTH, winY2)
 
+    -- Title bar (at bottom of window)
     gl.Color(0.1,0.1,0.1,0.95)
-    gl.Rect(loadX, loadY + LOAD_HEIGHT - LOAD_TITLE_H, loadX + LOAD_WIDTH, loadY + LOAD_HEIGHT)
+    local titleY1 = vsy - (loadY + LOAD_HEIGHT)
+    local titleY2 = vsy - (loadY + LOAD_HEIGHT - LOAD_TITLE_H)
+    gl.Rect(loadX, titleY1, loadX + LOAD_WIDTH, titleY2)
 
     gl.Color(1,0.7,0.2,1)
-    gl.Text("Load Layout", loadX + 8, loadY + LOAD_HEIGHT - LOAD_TITLE_H + 4, 14, "")
+    local titleTextY = vsy - (loadY + LOAD_HEIGHT - LOAD_TITLE_H + 4)
+    gl.Text("Load Layout", loadX + 8, titleTextY, 14, "")
 
     local r = LoadPopupRegions()
 
-    -- search box
+    -- search box (convert to bottom-up)
     gl.Color(0.15,0.15,0.15,0.9)
-    gl.Rect(loadX + r.searchBox.x, loadY + r.searchBox.y,
-            loadX + r.searchBox.x + r.searchBox.w, loadY + r.searchBox.y + r.searchBox.h)
+    local searchY1 = vsy - (loadY + r.searchBox.y + r.searchBox.h)
+    local searchY2 = vsy - (loadY + r.searchBox.y)
+    gl.Rect(loadX + r.searchBox.x, searchY1, loadX + r.searchBox.x + r.searchBox.w, searchY2)
     gl.Color(0.9,0.9,0.9,1)
-    gl.Text(searchText ~= "" and searchText or "Search...", loadX + r.searchBox.x + 4, loadY + r.searchBox.y + 4, 11, "")
+    local searchBoxTopY = loadY + r.searchBox.y  -- Top in top-down
+    local searchTextY = vsy - (searchBoxTopY + r.searchBox.h - 4)  -- Text Y in bottom-up (centered vertically)
+    gl.Text(searchText ~= "" and searchText or "Search...", loadX + r.searchBox.x + 4, searchTextY, 11, "")
 
-    -- list box
+    -- list box (convert to bottom-up)
     gl.Color(0.1,0.1,0.1,0.9)
-    gl.Rect(loadX + r.listBox.x, loadY + r.listBox.y,
-            loadX + r.listBox.x + r.listBox.w, loadY + r.listBox.y + r.listBox.h)
+    local listY1 = vsy - (loadY + r.listBox.y + r.listBox.h)
+    local listY2 = vsy - (loadY + r.listBox.y)
+    gl.Rect(loadX + r.listBox.x, listY1, loadX + r.listBox.x + r.listBox.w, listY2)
+    
     local rowH = 18
-    for i, item in ipairs(filteredLayouts) do
-      local iy = loadY + r.listBox.y + (i-1)*rowH
-      if iy + rowH > loadY + r.listBox.y + r.listBox.h then
+    local maxVisible = 18  -- Show max 18 items (increased from 10)
+    local totalItems = #filteredLayouts
+    local hasScrollbar = totalItems > maxVisible
+    local scrollBarW = 8
+    
+    -- Clamp scroll offset - ensure items always start from top
+    local maxScroll = math.max(0, totalItems - maxVisible)
+    if totalItems <= maxVisible then
+      -- If we have fewer items than maxVisible, always start from top (scroll = 0)
+      listScrollOffset = 0
+    else
+      -- Clamp scroll offset to valid range
+      if listScrollOffset > maxScroll then
+        listScrollOffset = maxScroll
+      end
+      if listScrollOffset < 0 then
+        listScrollOffset = 0
+      end
+    end
+    
+    -- Calculate item width (account for scrollbar if present)
+    local itemW = r.listBox.w - 4  -- Default: full width minus padding
+    if hasScrollbar then
+      itemW = itemW - scrollBarW - 2  -- Make room for scrollbar
+    end
+    
+    -- Render visible items (starting from scroll offset, top-aligned)
+    -- Force scroll offset to 0 when items should start from top
+    if totalItems <= maxVisible then
+      listScrollOffset = 0
+    end
+    local maxScroll = math.max(0, totalItems - maxVisible)
+    if listScrollOffset > maxScroll then
+      listScrollOffset = maxScroll
+    end
+    if listScrollOffset < 0 then
+      listScrollOffset = 0
+    end
+    
+    -- Calculate positions: items start from TOP of list box
+    -- Spring uses bottom-up coordinates (Y=0 at bottom), so convert coordinates
+    -- (vsx, vsy already retrieved at start of load popup rendering)
+    local listBoxTopY = loadY + r.listBox.y  -- Top Y in top-down coordinates
+    local listBoxBottomY = listBoxTopY + r.listBox.h
+    local itemsToShow = math.min(maxVisible, totalItems - listScrollOffset)
+    
+    -- Render items from top to bottom - convert to bottom-up coordinates
+    for row = 0, itemsToShow - 1 do
+      local itemIndex = listScrollOffset + row + 1
+      if itemIndex > totalItems then
         break
       end
-      local sel = (selectedIndex == i)
+      
+      local item = filteredLayouts[itemIndex]
+      -- Calculate top-down Y position
+      local itemTopY = listBoxTopY + 2 + (row * rowH)
+      local itemBottomY = itemTopY + rowH
+      
+      -- Check if item would go beyond list box bottom
+      if itemTopY + rowH > listBoxBottomY then
+        break
+      end
+      
+      -- Convert to bottom-up coordinates for gl.Rect and gl.Text
+      local rectY1 = vsy - itemBottomY  -- Bottom of item in bottom-up coords
+      local rectY2 = vsy - itemTopY    -- Top of item in bottom-up coords
+      local textY = vsy - (itemTopY + rowH - 4)  -- Text Y in bottom-up coords (centered vertically in row)
+      
+      local sel = (selectedIndex == itemIndex)
       gl.Color(sel and 0.3 or 0.2, sel and 0.5 or 0.2, sel and 0.8 or 0.2, 0.9)
-      gl.Rect(loadX + r.listBox.x + 2, iy+2, loadX + r.listBox.x + r.listBox.w - 2, iy + rowH)
+      gl.Rect(loadX + r.listBox.x + 2, rectY1, loadX + r.listBox.x + 2 + itemW, rectY2)
       gl.Color(1,1,1,1)
-      gl.Text(item.name or "?", loadX + r.listBox.x + 6, iy + 4, 11, "")
+      gl.Text(item.name or "?", loadX + r.listBox.x + 6, textY, 11, "")
+    end
+    
+    -- Draw scrollbar if needed (when more than maxVisible items)
+    if hasScrollbar then
+      local scrollBarX = loadX + r.listBox.x + r.listBox.w - scrollBarW - 2
+      local scrollBarTopY = loadY + r.listBox.y + 2  -- Top in top-down coords
+      local scrollBarBottomY = scrollBarTopY + (r.listBox.h - 4)  -- Bottom in top-down coords
+      local scrollBarH = r.listBox.h - 4
+      
+      -- Convert to bottom-up coordinates
+      local scrollBarY1 = vsy - scrollBarBottomY  -- Bottom in bottom-up
+      local scrollBarY2 = vsy - scrollBarTopY     -- Top in bottom-up
+      
+      -- Scrollbar track (darker background)
+      gl.Color(0.15,0.15,0.15,0.95)
+      gl.Rect(scrollBarX, scrollBarY1, scrollBarX + scrollBarW, scrollBarY2)
+      
+      -- Scrollbar thumb (brighter, more visible)
+      if maxScroll > 0 then
+        local thumbH = math.max(20, (maxVisible / totalItems) * scrollBarH)
+        local thumbTopY = scrollBarTopY + (listScrollOffset / maxScroll) * (scrollBarH - thumbH)
+        local thumbBottomY = thumbTopY + thumbH
+        local thumbY1 = vsy - thumbBottomY
+        local thumbY2 = vsy - thumbTopY
+        gl.Color(0.6,0.6,0.6,0.95)
+        gl.Rect(scrollBarX + 1, thumbY1, scrollBarX + scrollBarW - 1, thumbY2)
+      else
+        -- Full scrollbar when at top
+        gl.Color(0.6,0.6,0.6,0.95)
+        gl.Rect(scrollBarX + 1, scrollBarY1, scrollBarX + scrollBarW - 1, scrollBarY2)
+      end
     end
 
     -- buttons (Load/Delete/Duplicate/Close)
+    -- Convert to bottom-up coordinates (vsy already retrieved above)
     local function drawBtn(b, label)
       gl.Color(0.25,0.25,0.25,0.9)
-      gl.Rect(loadX + b.x, loadY + b.y, loadX + b.x + b.w, loadY + b.y + b.h)
+      -- Convert button Y coordinates to bottom-up
+      local btnTopY = loadY + b.y
+      local btnBottomY = btnTopY + b.h
+      local rectY1 = vsy - btnBottomY
+      local rectY2 = vsy - btnTopY
+      gl.Rect(loadX + b.x, rectY1, loadX + b.x + b.w, rectY2)
       gl.Color(1,1,1,1)
       local tw = gl.GetTextWidth(label) * 11
       local tx = loadX + b.x + (b.w - tw)/2
-      local ty = loadY + b.y + 4
+      local ty = vsy - (btnTopY + b.h - 4)  -- Convert text Y to bottom-up (centered vertically in button)
       gl.Text(label, tx, ty, 11, "")
     end
     drawBtn(r.btnLoad,  "Load")
@@ -1333,15 +1743,21 @@ function widget:DrawScreen()
     drawBtn(r.btnDup,   "Copy")
     drawBtn(r.btnClose, "Close")
 
-    -- thumbnail
+    -- thumbnail (convert to bottom-up coordinates)
     if selectedData then
-      DrawThumbnailSelected(loadX + r.thumbBox.x, loadY + r.thumbBox.y, 200)
+      -- DrawThumbnailSelected uses gl.Rect which expects bottom-up coordinates
+      -- thumbBox.y is top in top-down, convert to bottom in bottom-up
+      local thumbTopY = loadY + r.thumbBox.y  -- Top in top-down
+      local thumbBottomY_bu = vsy - (thumbTopY + 280)  -- Bottom in bottom-up (size=280)
+      DrawThumbnailSelected(loadX + r.thumbBox.x, thumbBottomY_bu, 280)
     else
       gl.Color(0.1,0.1,0.1,0.9)
-      gl.Rect(loadX + r.thumbBox.x, loadY + r.thumbBox.y,
-              loadX + r.thumbBox.x + r.thumbBox.w, loadY + r.thumbBox.y + r.thumbBox.h)
+      local thumbY1 = vsy - (loadY + r.thumbBox.y + r.thumbBox.h)
+      local thumbY2 = vsy - (loadY + r.thumbBox.y)
+      gl.Rect(loadX + r.thumbBox.x, thumbY1, loadX + r.thumbBox.x + r.thumbBox.w, thumbY2)
       gl.Color(0.8,0.8,0.8,1)
-      gl.Text("No layout selected", loadX + r.thumbBox.x + 20, loadY + r.thumbBox.y + 90, 12, "")
+      local thumbTextY = vsy - (loadY + r.thumbBox.y + 140)
+      gl.Text("No layout selected", loadX + r.thumbBox.x + 90, thumbTextY, 12, "")
     end
   end
 
@@ -1414,22 +1830,54 @@ function widget:DrawWorld()
     if pos then
       local bx, bz = WorldToBU(pos[1], pos[3])
       local layout = selectedData
-      local minX, maxX, minZ, maxZ = ComputeBounds(layout)
-      if minX then
-        local cx = (minX + maxX)/2
-        local cz = (minZ + maxZ)/2
+      -- Use file width/height if available (for legacy files with normalized coords)
+      -- Otherwise compute bounds from actual coordinates
+      local cx, cz
+      if layout.fileWidth and layout.fileHeight then
+        -- Legacy format: coordinates are normalized (start at 0,0), use file dimensions for centering
+        local minSize = layout.fileMinSize or 1
+        cx = math.floor((layout.fileWidth + minSize) / 2)
+        cz = math.floor((layout.fileHeight + minSize) / 2)
+      else
+        -- New format: compute bounds from actual coordinates
+        local minX, maxX, minZ, maxZ = ComputeBounds(layout)
+        if not minX then return end
+        cx = (minX + maxX)/2
+        cz = (minZ + maxZ)/2
+      end
+      if cx and cz then
+        -- Calculate translation offset (like original LayoutPlanner)
+        local shiftX, shiftZ
+        if layout.fileWidth and layout.fileHeight then
+          -- Legacy format: use file dimensions
+          local minSize = layout.fileMinSize or 1
+          shiftX = math.floor((layout.fileWidth + minSize) / 2)
+          shiftZ = math.floor((layout.fileHeight + minSize) / 2)
+        else
+          -- New format: use computed center
+          shiftX = cx
+          shiftZ = cz
+        end
+        
         gl.Color(1,1,0,0.5)
         gl.LineWidth(2)
         gl.BeginEnd(GL.LINES, function()
           -- building edges
           for size, group in pairs(layout.buildings) do
             for _, posBU in ipairs(group) do
-              -- Transform relative to center
-              local relX1, relZ1 = TransformBU(posBU[1] - cx, posBU[2] - cz, layoutRotation, layoutInverted)
-              local relX2, relZ2 = TransformBU(posBU[1] - cx + size, posBU[2] - cz, layoutRotation, layoutInverted)
-              local relX3, relZ3 = TransformBU(posBU[1] - cx + size, posBU[2] - cz + size, layoutRotation, layoutInverted)
-              local relX4, relZ4 = TransformBU(posBU[1] - cx, posBU[2] - cz + size, layoutRotation, layoutInverted)
-              -- Translate to cursor position (center of layout at cursor)
+              -- First translate to cursor-relative position (like original LayoutPlanner)
+              local tx1, tz1 = posBU[1] + (bx - shiftX), posBU[2] + (bz - shiftZ)
+              local tx2, tz2 = posBU[1] + size + (bx - shiftX), posBU[2] + (bz - shiftZ)
+              local tx3, tz3 = posBU[1] + size + (bx - shiftX), posBU[2] + size + (bz - shiftZ)
+              local tx4, tz4 = posBU[1] + (bx - shiftX), posBU[2] + size + (bz - shiftZ)
+              
+              -- Then apply rotation/inversion relative to the placed center (bx, bz)
+              local relX1, relZ1 = TransformBU(tx1 - bx, tz1 - bz, layoutRotation, layoutInverted)
+              local relX2, relZ2 = TransformBU(tx2 - bx, tz2 - bz, layoutRotation, layoutInverted)
+              local relX3, relZ3 = TransformBU(tx3 - bx, tz3 - bz, layoutRotation, layoutInverted)
+              local relX4, relZ4 = TransformBU(tx4 - bx, tz4 - bz, layoutRotation, layoutInverted)
+              
+              -- Final position
               local sx1, sz1 = relX1 + bx, relZ1 + bz
               local sx2, sz2 = relX2 + bx, relZ2 + bz
               local sx3, sz3 = relX3 + bx, relZ3 + bz
@@ -1447,10 +1895,15 @@ function widget:DrawWorld()
           end
           -- layout lines
           for _, ln in ipairs(layout.lines) do
-            -- Transform relative to center
-            local relX1, relZ1 = TransformBU(ln[1] - cx, ln[2] - cz, layoutRotation, layoutInverted)
-            local relX2, relZ2 = TransformBU(ln[3] - cx, ln[4] - cz, layoutRotation, layoutInverted)
-            -- Translate to cursor position (center of layout at cursor)
+            -- First translate to cursor-relative position
+            local tx1, tz1 = ln[1] + (bx - shiftX), ln[2] + (bz - shiftZ)
+            local tx2, tz2 = ln[3] + (bx - shiftX), ln[4] + (bz - shiftZ)
+            
+            -- Then apply rotation/inversion relative to the placed center (bx, bz)
+            local relX1, relZ1 = TransformBU(tx1 - bx, tz1 - bz, layoutRotation, layoutInverted)
+            local relX2, relZ2 = TransformBU(tx2 - bx, tz2 - bz, layoutRotation, layoutInverted)
+            
+            -- Final position
             local sx1, sz1 = relX1 + bx, relZ1 + bz
             local sx2, sz2 = relX2 + bx, relZ2 + bz
             local wx1, wz1 = BUToWorld(sx1, sz1)
@@ -1473,11 +1926,13 @@ end
 --------------------------------------------------------------------------------
 
 function widget:Initialize()
+  Spring.Echo("[LayoutPlus] ===== INITIALIZING LayoutPlannerPlus =====")
   EnsureLayoutDir()
   RefreshSavedLayouts()
   ApplySearchFilter()
   Spring.Echo("[LayoutPlus] LayoutPlannerPlus initialized, found " .. tostring(#savedLayouts) .. " layouts")
   Spring.Echo("[LayoutPlus] To save with name: /luaui layoutplus_save <name>")
+  Spring.Echo("[LayoutPlus] ===== INITIALIZATION COMPLETE =====")
 end
 
 --------------------------------------------------------------------------------
@@ -1491,6 +1946,35 @@ function widget:TextCommand(cmd)
     RefreshSavedLayouts()
     ApplySearchFilter()
     return true
+  end
+end
+
+--------------------------------------------------------------------------------
+-- Update: gradual rendering queue processing
+--------------------------------------------------------------------------------
+
+function widget:Update(dt)
+  if not renderingToGame then
+    return
+  end
+  
+  renderTimer = renderTimer + dt
+  if renderTimer > 0.1 then
+    -- Process 10 lines per 0.1 seconds to avoid lag
+    for i = 1, 10 do
+      if #drawLineQueue == 0 then
+        Spring.Echo("[LayoutPlus] All lines rendered")
+        renderingToGame = false
+        return
+      end
+      
+      local data = table.remove(drawLineQueue, 1)
+      Spring.MarkerAddLine(
+        data.startX, data.y, data.startZ,
+        data.endX,   data.y, data.endZ
+      )
+    end
+    renderTimer = 0
   end
 end
 

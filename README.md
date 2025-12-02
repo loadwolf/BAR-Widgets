@@ -9,7 +9,8 @@ You can now load your old LayoutPlanner files, copy them, and rename them for ea
 
 To-do list
  - Get feedback and refine and if worthy roll features into original
-
+ - Exit Button
+ - Filter items rise top not bottom
 
 Done
  - Added scroll bar to Load menu when  box gets full - Done 2025-12-02

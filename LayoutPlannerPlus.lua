@@ -84,6 +84,10 @@ local selectedIndex    = nil    -- index into filteredLayouts
 local selectedData     = nil    -- layout table of selected
 local searchText       = ""
 
+-- Layout transformation state (for selected layout preview/placement)
+local layoutRotation   = 0      -- rotation angle in degrees (0, 90, 180, 270)
+local layoutInverted  = false  -- horizontal inversion (flip x)
+
 --------------------------------------------------------------------------------
 -- Windows: main + load popup
 --------------------------------------------------------------------------------
@@ -120,31 +124,54 @@ end
 -- Snap BU coordinates based on snap mode
 local function SnapBU(bx, bz, mode)
   if mode == 0 then
-    return bx, bz  -- no snap
+    -- Off: no snapping
+    return bx, bz
   elseif mode == 1 then
-    -- Grid intersections (snap to nearest BU)
-    return math.floor(bx + 0.5), math.floor(bz + 0.5)
+    -- "Intersect": snap to 3 × Third = 3 BU = 48 game units
+    local step = 3
+    local sx = math.floor(bx / step + 0.5) * step
+    local sz = math.floor(bz / step + 0.5) * step
+    return sx, sz
   elseif mode == 2 then
-    -- Midpoints between intersections
-    local baseX = math.floor(bx)
-    local baseZ = math.floor(bz)
-    local fracX = bx - baseX
-    local fracZ = bz - baseZ
-    if fracX > 0.5 then baseX = baseX + 1 end
-    if fracZ > 0.5 then baseZ = baseZ + 1 end
-    return baseX - 0.5, baseZ - 0.5
+    -- "Mid": snap to 1.5 × Third = 1.5 BU = 24 game units
+    -- Convert to game units, snap, then back to BU
+    local xWorld = bx * BU_SIZE
+    local zWorld = bz * BU_SIZE
+    local stepIGU = 16 * 1.5  -- 24 game units
+    local sxWorld = math.floor(xWorld / stepIGU + 0.5) * stepIGU
+    local szWorld = math.floor(zWorld / stepIGU + 0.5) * stepIGU
+    return sxWorld / BU_SIZE, szWorld / BU_SIZE
   elseif mode == 3 then
-    -- Thirds between intersections
-    local baseX = math.floor(bx)
-    local baseZ = math.floor(bz)
-    local fracX = bx - baseX
-    local fracZ = bz - baseZ
-    -- Snap to nearest third: 0, 0.333, 0.667, or 1.0
-    local snapX = math.floor(fracX * 3 + 0.5) / 3
-    local snapZ = math.floor(fracZ * 3 + 0.5) / 3
-    return baseX + snapX, baseZ + snapZ
+    -- "Thirds": use simple 1‑BU spacing (same integer grid as cross layout)
+    return math.floor(bx + 0.5), math.floor(bz + 0.5)
   end
+  -- fallback: if mode is invalid, just return original
   return bx, bz
+end
+
+--------------------------------------------------------------------------------
+-- Layout transformation helpers
+--------------------------------------------------------------------------------
+
+-- Transform a BU coordinate (x, z) based on rotation and inversion
+-- rotation: 0, 90, 180, or 270 degrees
+-- inverted: if true, flip about Y axis (mirror left/right, negate x)
+local function TransformBU(x, z, rotation, inverted)
+  local tx, tz = x, z
+  -- Apply inversion first (flip about Y axis = mirror left/right)
+  -- This makes inversion independent of rotation
+  if inverted then
+    tx = -tx
+  end
+  -- Then apply rotation (clockwise)
+  if rotation == 90 then
+    tx, tz = -tz, tx
+  elseif rotation == 180 then
+    tx, tz = -tx, -tz
+  elseif rotation == 270 then
+    tx, tz = tz, -tx
+  end
+  return tx, tz
 end
 
 --------------------------------------------------------------------------------
@@ -751,6 +778,9 @@ function widget:MousePress(mx, my, button)
         if row >= 1 and row <= idx then
           selectedIndex = row
           selectedData  = filteredLayouts[row].data
+          -- Reset transformation when selecting a new layout
+          layoutRotation = 0
+          layoutInverted = false
         end
       end
       return true
@@ -778,6 +808,8 @@ function widget:MousePress(mx, my, button)
           ApplySearchFilter()
           selectedIndex = nil
           selectedData  = nil
+          layoutRotation = 0
+          layoutInverted = false
         end
         return true
       end
@@ -858,6 +890,13 @@ function widget:MousePress(mx, my, button)
     end
     if MainButtonHit(mx, my, btns.render.x, btns.render.y, BTN_W, BTN_H) then
       -- render currentLayout as markers (buildings + lines)
+      Spring.Echo("[LayoutPlus] Render button clicked")
+      local lineCount = #currentLayout.lines
+      local buildingCount = 0
+      for size, group in pairs(currentLayout.buildings) do
+        buildingCount = buildingCount + #group
+      end
+      Spring.Echo("[LayoutPlus] Rendering: " .. lineCount .. " lines, " .. buildingCount .. " buildings")
       -- Render buildings as edge lines
       for size, group in pairs(currentLayout.buildings) do
         for _, pos in ipairs(group) do
@@ -897,7 +936,8 @@ function widget:MousePress(mx, my, button)
         if lx >= x and lx <= x + w then
           lineSnapMode = i
           local labels = {"Off", "Intersect", "Mid", "Third"}
-          Spring.Echo("[LayoutPlus] Line snap: " .. labels[i+1])
+          local steps = {"none", "3 BU (48 IGU)", "1.5 BU (24 IGU)", "1 BU (16 IGU)"}
+          Spring.Echo("[LayoutPlus] Line snap: " .. labels[i+1] .. " (mode " .. i .. ", step: " .. steps[i+1] .. ")")
           return true
         end
         x = x + w + 4
@@ -932,25 +972,33 @@ function widget:MousePress(mx, my, button)
       if minX then
         local cx = (minX + maxX)/2
         local cz = (minZ + maxZ)/2
-        -- copy buildings as line edges
+        -- copy buildings as line edges (with transformation)
         for size, group in pairs(layout.buildings) do
           for _, posBU in ipairs(group) do
-            local sx = posBU[1] - cx + bx
-            local sz = posBU[2] - cz + bz
-            local ex = sx + size
-            local ez = sz + size
-            AddLineBU(sx, sz, ex, sz)
-            AddLineBU(ex, sz, ex, ez)
-            AddLineBU(ex, ez, sx, ez)
-            AddLineBU(sx, ez, sx, sz)
+            -- Transform relative to center
+            local relX1, relZ1 = TransformBU(posBU[1] - cx, posBU[2] - cz, layoutRotation, layoutInverted)
+            local relX2, relZ2 = TransformBU(posBU[1] - cx + size, posBU[2] - cz, layoutRotation, layoutInverted)
+            local relX3, relZ3 = TransformBU(posBU[1] - cx + size, posBU[2] - cz + size, layoutRotation, layoutInverted)
+            local relX4, relZ4 = TransformBU(posBU[1] - cx, posBU[2] - cz + size, layoutRotation, layoutInverted)
+            -- Translate to cursor position (center of layout at cursor)
+            local sx1, sz1 = relX1 + bx, relZ1 + bz
+            local sx2, sz2 = relX2 + bx, relZ2 + bz
+            local sx3, sz3 = relX3 + bx, relZ3 + bz
+            local sx4, sz4 = relX4 + bx, relZ4 + bz
+            AddLineBU(sx1, sz1, sx2, sz2)
+            AddLineBU(sx2, sz2, sx3, sz3)
+            AddLineBU(sx3, sz3, sx4, sz4)
+            AddLineBU(sx4, sz4, sx1, sz1)
           end
         end
-        -- copy layout lines
+        -- copy layout lines (with transformation)
         for _, ln in ipairs(layout.lines) do
-          local sx1 = ln[1] - cx + bx
-          local sz1 = ln[2] - cz + bz
-          local sx2 = ln[3] - cx + bx
-          local sz2 = ln[4] - cz + bz
+          -- Transform relative to center
+          local relX1, relZ1 = TransformBU(ln[1] - cx, ln[2] - cz, layoutRotation, layoutInverted)
+          local relX2, relZ2 = TransformBU(ln[3] - cx, ln[4] - cz, layoutRotation, layoutInverted)
+          -- Translate to cursor position (center of layout at cursor)
+          local sx1, sz1 = relX1 + bx, relZ1 + bz
+          local sx2, sz2 = relX2 + bx, relZ2 + bz
           AddLineBU(sx1, sz1, sx2, sz2)
         end
         Spring.Echo("[LayoutPlus] Placed layout at cursor")
@@ -958,6 +1006,8 @@ function widget:MousePress(mx, my, button)
         selectedData  = nil
         selectedIndex = nil
         drawingMode   = wasDrawingBeforeLoad
+        layoutRotation = 0
+        layoutInverted = false
         return true
       end
     end
@@ -1120,7 +1170,22 @@ function widget:KeyPress(key, mods, isRepeat)
     selectedData  = nil
     selectedIndex = nil
     drawingMode   = wasDrawingBeforeLoad
+    layoutRotation = 0
+    layoutInverted = false
     return true
+  end
+
+  -- Rotation and inversion keys (only when layout is selected)
+  if selectedData then
+    if key == 114 then -- 'r' key
+      layoutRotation = (layoutRotation + 90) % 360
+      Spring.Echo("[LayoutPlus] Rotation: " .. layoutRotation .. "°")
+      return true
+    elseif key == 105 then -- 'i' key
+      layoutInverted = not layoutInverted
+      Spring.Echo("[LayoutPlus] Inverted: " .. (layoutInverted and "Yes" or "No"))
+      return true
+    end
   end
 
   if key == 306 then -- CTRL
@@ -1214,7 +1279,7 @@ function widget:DrawScreen()
 
   -- hint text
   gl.Color(1,1,1,0.8)
-  gl.Text("LMB drag: buildings  |  CTRL+LMB: lines  |  RMB: toggle building", mainX + 10, mainY + 10, 11, "")
+  gl.Text("LMB Lines, RMB remove", mainX + 10, mainY + 10, 11, "")
 
   -- load popup
   if loadPopupVisible then
@@ -1359,14 +1424,20 @@ function widget:DrawWorld()
           -- building edges
           for size, group in pairs(layout.buildings) do
             for _, posBU in ipairs(group) do
-              local sx = posBU[1] - cx + bx
-              local sz = posBU[2] - cz + bz
-              local ex = sx + size
-              local ez = sz + size
-              local wx1, wz1 = BUToWorld(sx, sz)
-              local wx2, wz2 = BUToWorld(ex, sz)
-              local wx3, wz3 = BUToWorld(ex, ez)
-              local wx4, wz4 = BUToWorld(sx, ez)
+              -- Transform relative to center
+              local relX1, relZ1 = TransformBU(posBU[1] - cx, posBU[2] - cz, layoutRotation, layoutInverted)
+              local relX2, relZ2 = TransformBU(posBU[1] - cx + size, posBU[2] - cz, layoutRotation, layoutInverted)
+              local relX3, relZ3 = TransformBU(posBU[1] - cx + size, posBU[2] - cz + size, layoutRotation, layoutInverted)
+              local relX4, relZ4 = TransformBU(posBU[1] - cx, posBU[2] - cz + size, layoutRotation, layoutInverted)
+              -- Translate to cursor position (center of layout at cursor)
+              local sx1, sz1 = relX1 + bx, relZ1 + bz
+              local sx2, sz2 = relX2 + bx, relZ2 + bz
+              local sx3, sz3 = relX3 + bx, relZ3 + bz
+              local sx4, sz4 = relX4 + bx, relZ4 + bz
+              local wx1, wz1 = BUToWorld(sx1, sz1)
+              local wx2, wz2 = BUToWorld(sx2, sz2)
+              local wx3, wz3 = BUToWorld(sx3, sz3)
+              local wx4, wz4 = BUToWorld(sx4, sz4)
               local y = Spring.GetGroundHeight((wx1+wx3)/2, (wz1+wz3)/2) + 8
               gl.Vertex(wx1, y, wz1); gl.Vertex(wx2, y, wz2)
               gl.Vertex(wx2, y, wz2); gl.Vertex(wx3, y, wz3)
@@ -1376,10 +1447,12 @@ function widget:DrawWorld()
           end
           -- layout lines
           for _, ln in ipairs(layout.lines) do
-            local sx1 = ln[1] - cx + bx
-            local sz1 = ln[2] - cz + bz
-            local sx2 = ln[3] - cx + bx
-            local sz2 = ln[4] - cz + bz
+            -- Transform relative to center
+            local relX1, relZ1 = TransformBU(ln[1] - cx, ln[2] - cz, layoutRotation, layoutInverted)
+            local relX2, relZ2 = TransformBU(ln[3] - cx, ln[4] - cz, layoutRotation, layoutInverted)
+            -- Translate to cursor position (center of layout at cursor)
+            local sx1, sz1 = relX1 + bx, relZ1 + bz
+            local sx2, sz2 = relX2 + bx, relZ2 + bz
             local wx1, wz1 = BUToWorld(sx1, sz1)
             local wx2, wz2 = BUToWorld(sx2, sz2)
             local y1 = Spring.GetGroundHeight(wx1, wz1) + 8

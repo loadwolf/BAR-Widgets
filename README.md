@@ -1,5 +1,5 @@
 LayoutPlannerPlus 
-This is the save and load feature I always wished existed when creating bar layouts. 
+This is the save and load feature with htumbnail that I always wished existed when creating bar layouts. 
 
 Al credit to Noryon the LayoutPlanner for the base that we have expanded on here.
 

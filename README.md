@@ -12,4 +12,4 @@ To-do list
  - Rotate
  - Add snapping options (middle of grid square and on-grid alignment)
  - Fix search
- - Get feedback and refine
+ - Get feedback and refine and if worthy roll features into original

@@ -67,6 +67,7 @@ local removeDragStart  = nil    -- for right-drag removal box
 
 local altMode          = false
 local ctrlMode         = false
+local lastMidClickTime = nil   -- for double middle-click detection
 
 -- Remember drawing state when opening load popup
 local wasDrawingBeforeLoad = false
@@ -99,12 +100,18 @@ local listScrollOffset = 0      -- scroll offset for layout list (in items)
 local layoutRotation   = 0      -- rotation angle in degrees (0, 90, 180, 270)
 local layoutInverted  = false  -- horizontal inversion (flip x)
 
+-- Simple blink helper for text carets
+local function IsCaretVisible()
+  local t = Spring.GetGameSeconds and Spring.GetGameSeconds() or os.clock()
+  return (t % 1.0) < 0.5
+end
+
 --------------------------------------------------------------------------------
 -- Windows: main + load popup
 --------------------------------------------------------------------------------
 
 -- Main window (draggable)
-local mainX, mainY     = 40, 200
+local mainX, mainY     = 40, 200   -- will be overridden in Initialize based on screen size
 local mainDragging     = false
 local mainDragDX, mainDragDY = 0, 0
 local MAIN_TITLE_H     = 24
@@ -115,7 +122,9 @@ local MAIN_PADDING     = 10   -- padding around elements
 local loadPopupVisible = false
 local loadX, loadY     = 200, 220
 local loadDragging     = false
-local loadDragDX, loadDragDY = 0, 0
+local loadDragDX, loadDragDY = 0, 0        -- unused with new drag math but kept for safety
+local loadDragStartMX, loadDragStartMY = 0, 0
+local loadOrigX, loadOrigY           = 0, 0
 local LOAD_TITLE_H     = 24
 local LOAD_WIDTH       = 520
 local LOAD_HEIGHT      = 400
@@ -729,7 +738,15 @@ local function DrawSaveDialog()
     displayText = "e.g. corner001 or wall02"
     gl.Color(0.5, 0.5, 0.5, 1.0)
   end
-  gl.Text(displayText, dialogX + 14, dialogY + 52, 13, "")
+  local textX = dialogX + 14
+  local textY = dialogY + 52
+  gl.Text(displayText, textX, textY, 13, "")
+  -- Blinking caret to indicate active text input
+  if showSaveDialog and IsCaretVisible() then
+    local w = gl.GetTextWidth(displayText) * 13
+    gl.Color(1, 1, 1, 1)
+    gl.Text("|", textX + w + 2, textY, 13, "")
+  end
 
   -- Buttons
   local btnY = dialogY + 14
@@ -811,16 +828,19 @@ end
 local function LoadPopupRegions()
   -- relative coords inside popup
   -- Note: loadY is the TOP of the window, Y increases downward
-  -- Title bar is at the BOTTOM (loadY + LOAD_HEIGHT - LOAD_TITLE_H)
+  -- Title bar is at the TOP (height = LOAD_TITLE_H)
   return {
-    searchBox = { x = 10, y = LOAD_HEIGHT - LOAD_TITLE_H - 30, w = 180, h = 20 },
-    listBox   = { x = 10, y = 10, w = 200, h = LOAD_HEIGHT - LOAD_TITLE_H - 50 },
-    thumbBox  = { x = 220, y = 40, w = 280, h = 290 },  -- Larger thumbnail, starts below buttons
-    -- Position buttons at TOP of window (same Y as listBox start, but on right side)
-    btnLoad   = { x = 220, y = 10, w = 60,  h = 24 },  -- Same Y as listBox top
-    btnDel    = { x = 285, y = 10, w = 60,  h = 24 },
-    btnDup    = { x = 350, y = 10, w = 60,  h = 24 },
-    btnClose  = { x = LOAD_WIDTH - 70, y = 10, w = 60, h = 20 }
+    -- Search just under the title bar
+    searchBox = { x = 10, y = LOAD_TITLE_H + 8, w = 200, h = 20 },
+    -- List box starts a bit under the search bar
+    listBox   = { x = 10, y = LOAD_TITLE_H + 36, w = 200, h = LOAD_HEIGHT - LOAD_TITLE_H - 56 },
+    -- Larger thumbnail, starts below the buttons, aligned with list vertically
+    thumbBox  = { x = 220, y = LOAD_TITLE_H + 36, w = 280, h = 290 },
+    -- Buttons sit just under the title bar, above search/list
+    btnLoad   = { x = 220, y = LOAD_TITLE_H + 6, w = 60,  h = 24 },
+    btnDel    = { x = 285, y = LOAD_TITLE_H + 6, w = 60,  h = 24 },
+    btnDup    = { x = 350, y = LOAD_TITLE_H + 6, w = 60,  h = 24 },
+    btnClose  = { x = LOAD_WIDTH - 70, y = LOAD_TITLE_H + 6, w = 60, h = 20 }
   }
 end
 
@@ -844,6 +864,18 @@ function widget:MousePress(mx, my, button)
     end
     return true -- consume clicks while dialog open
   end
+  -- Double middle mouse: toggle draw OFF
+  if button == 2 then
+    local now = Spring.GetGameSeconds and Spring.GetGameSeconds() or os.clock()
+    local dt  = lastMidClickTime and (now - lastMidClickTime) or math.huge
+    if dt < 0.35 then
+      drawingMode = false
+      Spring.Echo("[LayoutPlus] Drawing: OFF (double middle-click)")
+      lastMidClickTime = nil
+      return true
+    end
+    lastMidClickTime = now
+  end
   -- Handle load popup first
   if loadPopupVisible then
     local relX = mx - loadX
@@ -853,29 +885,37 @@ function widget:MousePress(mx, my, button)
     local relY_bu = my - loadY_bu  -- Mouse Y relative to bottom of window (bottom-up)
     local r = LoadPopupRegions()
 
-    -- drag popup by title bar (at bottom of window in top-down, top in bottom-up)
-    local titleBarTop_bu = vsy - loadY  -- Top of title bar in bottom-up
-    local titleBarBottom_bu = vsy - (loadY + LOAD_TITLE_H)  -- Bottom of title bar in bottom-up
+    -- drag popup by title bar: full title height
+    local titleBarTop_bu    = vsy - loadY              -- Window top in bottom-up
+    local titleBarBottom_bu = vsy - (loadY + LOAD_TITLE_H)
     if button == 1 and relX >= 0 and relX <= LOAD_WIDTH and
        my >= titleBarBottom_bu and my <= titleBarTop_bu then
       loadDragging = true
-      loadDragDX, loadDragDY = mx - loadX, my - loadY_bu
+      -- Store starting mouse position (bottom-up) and original window position (top-down)
+      loadDragStartMX, loadDragStartMY = mx, my
+      loadOrigX, loadOrigY             = loadX, loadY
       return true
     end
 
-    -- close button (convert button Y to bottom-up)
-    -- Match rendering calculation exactly
-    local btnCloseTopY = loadY + r.btnClose.y  -- Top in top-down
-    local btnCloseBottomY = btnCloseTopY + r.btnClose.h  -- Bottom in top-down
-    local btnCloseBottomY_bu = vsy - btnCloseBottomY  -- Bottom in bottom-up
-    local btnCloseTopY_bu = vsy - btnCloseTopY  -- Top in bottom-up
-    if button == 1 and
-       relX >= r.btnClose.x and relX <= r.btnClose.x + r.btnClose.w and
-       my >= btnCloseBottomY_bu and my <= btnCloseTopY_bu then
-      loadPopupVisible = false
-      -- restore drawing state when popup is closed without placement
-      drawingMode = wasDrawingBeforeLoad
-      return true
+    -- close button (convert button rect to bottom-up, match drawBtn exactly)
+    if button == 1 then
+      local btnCloseTopY    = loadY + r.btnClose.y              -- top in top-down
+      local btnCloseBottomY = btnCloseTopY + r.btnClose.h       -- bottom in top-down
+      local btnX1 = loadX + r.btnClose.x
+      local btnX2 = btnX1 + r.btnClose.w
+      local btnY1 = vsy - btnCloseBottomY   -- bottom in bottom-up
+      local btnY2 = vsy - btnCloseTopY      -- top in bottom-up
+      if mx >= btnX1 and mx <= btnX2 and my >= btnY1 and my <= btnY2 then
+        -- Just close the popup and restore state; do NOT start/keep a preview
+        loadPopupVisible = false
+        drawingMode      = wasDrawingBeforeLoad
+        -- Cancel any selected layout & transforms so nothing follows the cursor
+        selectedIndex    = nil
+        selectedData     = nil
+        layoutRotation   = 0
+        layoutInverted   = false
+        return true
+      end
     end
 
     -- buttons Load/Delete/Duplicate (convert button Y to bottom-up)
@@ -956,40 +996,59 @@ function widget:MousePress(mx, my, button)
     end
 
     -- search box focus (we'll just always treat keyboard as updating search when popup visible)
-    -- list click (convert list box Y to bottom-up)
+    -- list click: mirror DrawScreen item rectangles exactly (bottom-up coords)
     local listBoxTopY = loadY + r.listBox.y  -- Top in top-down
-    local listBoxBottomY_bu = vsy - (listBoxTopY + r.listBox.h)  -- Bottom in bottom-up
-    local listBoxTopY_bu = vsy - listBoxTopY  -- Top in bottom-up
+    local listBoxBottomY = listBoxTopY + r.listBox.h
+    local listBoxBottomY_bu = vsy - listBoxBottomY  -- Bottom in bottom-up
+    local listBoxTopY_bu = vsy - listBoxTopY        -- Top in bottom-up
     if button == 1 and
        relX >= r.listBox.x and relX <= r.listBox.x + r.listBox.w and
        my >= listBoxBottomY_bu and my <= listBoxTopY_bu then
-      local idx = #filteredLayouts
-      if idx > 0 then
-        -- Check if clicking on scrollbar
-        local maxVisible = 18
-        local hasScrollbar = idx > maxVisible
-        local scrollBarW = 8
-        local scrollBarX = r.listBox.x + r.listBox.w - scrollBarW - 2
+      local totalItems = #filteredLayouts
+      if totalItems > 0 then
+        local maxVisible  = 18
+        local hasScrollbar = totalItems > maxVisible
+        local scrollBarW   = 8
+        local scrollBarX   = r.listBox.x + r.listBox.w - scrollBarW - 2
         if hasScrollbar and relX >= scrollBarX then
-          -- Clicked on scrollbar - could implement drag scrolling here if needed
+          -- Clicked on scrollbar - handled separately
           return true
         end
-        
-        -- Calculate clicked row (account for scroll offset, using bottom-up coordinates)
-        -- Items are rendered from top to bottom, top has highest Y in bottom-up
+
+        -- Clamp scroll offset like in DrawScreen
+        local maxScroll = math.max(0, totalItems - maxVisible)
+        if totalItems <= maxVisible then
+          listScrollOffset = 0
+        else
+          if listScrollOffset > maxScroll then listScrollOffset = maxScroll end
+          if listScrollOffset < 0 then listScrollOffset = 0 end
+        end
+
         local rowH = 18
-        local localY_fromTop = listBoxTopY_bu - my  -- Distance from top of list box (bottom-up, positive = down)
-        local displayRow = math.floor(localY_fromTop / rowH)  -- 0-based from top
-        local actualRow = listScrollOffset + displayRow + 1  -- Convert to 1-based index
-        if actualRow < 1 then actualRow = 1 end
-        if actualRow > idx then actualRow = idx end
-        
-        if actualRow >= 1 and actualRow <= idx then
-          selectedIndex = actualRow
-          selectedData  = filteredLayouts[actualRow].data
-          -- Reset transformation when selecting a new layout
-          layoutRotation = 0
-          layoutInverted = false
+        local itemsToShow = math.min(maxVisible, totalItems - listScrollOffset)
+
+        -- Iterate rows and use the exact same rect math as DrawScreen
+        for row = 0, itemsToShow - 1 do
+          local itemIndex = listScrollOffset + row + 1
+          if itemIndex > totalItems then break end
+
+          local itemTopY    = listBoxTopY + 2 + (row * rowH)
+          local itemBottomY = itemTopY + rowH
+          if itemTopY + rowH > listBoxBottomY then
+            break
+          end
+
+          local rectY1 = vsy - itemBottomY -- bottom in bottom-up
+          local rectY2 = vsy - itemTopY    -- top in bottom-up
+
+          if my >= rectY1 and my <= rectY2 then
+            selectedIndex = itemIndex
+            selectedData  = filteredLayouts[itemIndex].data
+            -- Reset transformation when selecting a new layout
+            layoutRotation = 0
+            layoutInverted = false
+            break
+          end
         end
       end
       return true
@@ -1028,7 +1087,9 @@ function widget:MousePress(mx, my, button)
         -- remember drawing state, and turn drawing off while loading
         wasDrawingBeforeLoad = drawingMode
         drawingMode = false
-        loadPopupVisible = true
+        -- open load popup positioned over the main window (same top‑left)
+        loadX, loadY       = mainX, mainY
+        loadPopupVisible   = true
         listScrollOffset = 0  -- Reset scroll when opening popup
         RefreshSavedLayouts()
         ApplySearchFilter()
@@ -1301,7 +1362,12 @@ function widget:MouseMove(mx, my, dx, dy, button)
     return
   end
   if loadDragging then
-    loadX, loadY = mx - loadDragDX, my - loadDragDY
+    -- Mouse Y is bottom-up, loadY is top-down.
+    -- Horizontal movement is the same, vertical must be inverted to feel natural.
+    local dx = mx - loadDragStartMX
+    local dy = my - loadDragStartMY
+    loadX = loadOrigX + dx
+    loadY = loadOrigY - dy
     return
   end
 end
@@ -1430,6 +1496,15 @@ function widget:KeyPress(key, mods, isRepeat)
     layoutRotation = 0
     layoutInverted = false
     return true
+  end
+
+  -- ESC with only main window: force Draw OFF
+  if key == 27 and not loadPopupVisible and not showSaveDialog and not selectedData then
+    if drawingMode then
+      drawingMode = false
+      Spring.Echo("[LayoutPlus] Drawing: OFF (ESC)")
+      return true
+    end
   end
 
   -- Rotation and inversion keys (only when layout is selected)
@@ -1596,15 +1671,21 @@ function widget:DrawScreen()
     local winY2 = vsy - loadY
     gl.Rect(loadX, winY1, loadX + LOAD_WIDTH, winY2)
 
-    -- Title bar (at bottom of window)
+    -- Title bar (at TOP of window)
     gl.Color(0.1,0.1,0.1,0.95)
-    local titleY1 = vsy - (loadY + LOAD_HEIGHT)
-    local titleY2 = vsy - (loadY + LOAD_HEIGHT - LOAD_TITLE_H)
+    local titleTop_td    = loadY
+    local titleBottom_td = loadY + LOAD_TITLE_H
+    local titleY1 = vsy - titleBottom_td
+    local titleY2 = vsy - titleTop_td
     gl.Rect(loadX, titleY1, loadX + LOAD_WIDTH, titleY2)
 
     gl.Color(1,0.7,0.2,1)
-    local titleTextY = vsy - (loadY + LOAD_HEIGHT - LOAD_TITLE_H + 4)
-    gl.Text("Load Layout", loadX + 8, titleTextY, 14, "")
+    -- Place title text closer to the vertical middle of the header (baseline from bottom)
+    local titleFontSize = 14
+    local titleBottom_td = loadY + LOAD_TITLE_H
+    local titleTextBaseline_td = titleBottom_td - 6  -- ~6px above bottom of header
+    local titleTextY = vsy - titleTextBaseline_td
+    gl.Text("LayoutPlannerPlus - Load Menu", loadX + 8, titleTextY, titleFontSize, "")
 
     local r = LoadPopupRegions()
 
@@ -1616,7 +1697,15 @@ function widget:DrawScreen()
     gl.Color(0.9,0.9,0.9,1)
     local searchBoxTopY = loadY + r.searchBox.y  -- Top in top-down
     local searchTextY = vsy - (searchBoxTopY + r.searchBox.h - 4)  -- Text Y in bottom-up (centered vertically)
-    gl.Text(searchText ~= "" and searchText or "Search...", loadX + r.searchBox.x + 4, searchTextY, 11, "")
+    local sText = searchText ~= "" and searchText or "Search..."
+    local sX    = loadX + r.searchBox.x + 4
+    gl.Text(sText, sX, searchTextY, 11, "")
+    -- Blinking caret for search input while load popup is open
+    if loadPopupVisible and IsCaretVisible() then
+      local w = gl.GetTextWidth(sText) * 11
+      gl.Color(1,1,1,1)
+      gl.Text("|", sX + w + 2, searchTextY, 11, "")
+    end
 
     -- list box (convert to bottom-up)
     gl.Color(0.1,0.1,0.1,0.9)
@@ -1939,6 +2028,15 @@ function widget:Initialize()
   EnsureLayoutDir()
   RefreshSavedLayouts()
   ApplySearchFilter()
+  -- Position main window mid‑screen on the LEFT side on first load
+  local vsx, vsy = gl.GetViewSizes()
+  local contentH = MAIN_TITLE_H + 10 + BTN_H + 8 + BTN_H + 10 + 20 + 5
+  local h        = contentH + MAIN_PADDING * 2
+  -- X fixed near left edge, Y centered
+  mainX = 40
+  mainY = math.max(40, (vsy - h) / 2)
+  -- Start load popup over the main window
+  loadX, loadY = mainX, mainY
   Spring.Echo("[LayoutPlus] LayoutPlannerPlus initialized, found " .. tostring(#savedLayouts) .. " layouts")
   Spring.Echo("[LayoutPlus] To save with name: /luaui layoutplus_save <name>")
   Spring.Echo("[LayoutPlus] ===== INITIALIZATION COMPLETE =====")

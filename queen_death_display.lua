@@ -324,9 +324,9 @@ function widget:DrawScreen()
         currentY = currentY - lineHeight
         
         if graceRemaining and graceRemaining > 0 then
-            -- Large text for No Rush (4x size = 44px)
+            -- Large text for No Rush (4x size = 44px) - just the time value
             gl.Color(0.5, 1, 0.5, 1)
-            gl.Text("No Rush: " .. formatTime(graceRemaining), panelX + padding + 10, currentY, 44, "o")
+            gl.Text(formatTime(graceRemaining), panelX + padding + 10, currentY, 44, "o")
             currentY = currentY - 50  -- Extra spacing for large text
         end
         
@@ -335,12 +335,12 @@ function widget:DrawScreen()
             gl.Text("Queens Arrive: " .. formatTime(queenETA), panelX + padding + 10, currentY, 11, "n")
             currentY = currentY - lineHeight
         elseif remainingQueens then
-            -- Large text for Queens Remaining (4x size = 44px)
+            -- Large text for Queens Remaining (4x size = 44px) - just the count
             gl.Color(1, 0.5, 0.5, 1)
             if remainingQueens > 0 then
-                gl.Text("Queens Remaining: " .. remainingQueens, panelX + padding + 10, currentY, 44, "o")
+                gl.Text(tostring(remainingQueens), panelX + padding + 10, currentY, 44, "o")
             else
-                gl.Text("All Queens Defeated!", panelX + padding + 10, currentY, 44, "o")
+                gl.Text("ALL DEFEATED!", panelX + padding + 10, currentY, 44, "o")
             end
             currentY = currentY - 50  -- Extra spacing for large text
         end

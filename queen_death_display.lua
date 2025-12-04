@@ -40,14 +40,14 @@ local MAX_MESSAGES = 5
 local panelX = 20
 local panelY = nil  -- Will be set in Initialize based on screen size
 local panelDragging = false
-local dragOffsetX = 0
-local dragOffsetY = 0
+local panelDragDX = 0
+local panelDragDY = 0
 
 function widget:Initialize()
     Spring.Echo("[Queen Death Display] Widget initialized")
-    -- Initialize panel position
+    -- Initialize panel position (in bottom-up coordinates like LayoutPlannerPlus)
     local vsx, vsy = gl.GetViewSizes()
-    panelY = vsy - 100
+    panelY = 140  -- Bottom-up: Y increases upward from bottom
     -- Add a test message to verify drawing works
     local now = Spring.GetGameSeconds()
     table.insert(deathMessages, {
@@ -272,37 +272,38 @@ function widget:DrawScreen()
     -- Get timer info
     local graceRemaining, queenETA, remainingQueens = getTimerInfo()
     
-    -- Update panel Y if screen size changed
-    if not panelY or panelY > vsy then
-        panelY = vsy - 100
+    -- Update panel Y if screen size changed (bottom-up coordinates)
+    if not panelY or panelY < 50 then
+        panelY = 140
     end
     
-    -- Display panel (positioned by dragging)
-    local panelW = 350
+    -- Display panel (positioned by dragging) - wider to fit large text
+    local panelW = 450  -- Increased width for large timer text
     local lineHeight = 20
     local padding = 10
     
-    -- Calculate panel height (include timer section at top)
+    -- Calculate panel height (include header + timer section)
+    local headerHeight = 20
     local timerSectionHeight = 0
     if graceRemaining or queenETA or remainingQueens then
-        timerSectionHeight = lineHeight + padding  -- Header
+        timerSectionHeight = padding  -- No "=== TIMERS ===" label anymore
         if graceRemaining and graceRemaining > 0 then
             timerSectionHeight = timerSectionHeight + 50  -- Large text (44px) + spacing
         end
         if queenETA then
-            timerSectionHeight = timerSectionHeight + lineHeight  -- Normal size
+            timerSectionHeight = timerSectionHeight + 50 + 40  -- Large text (44px) + spacing + extra 40px
         end
         if remainingQueens then
             timerSectionHeight = timerSectionHeight + 50  -- Large text (44px) + spacing
         end
     end
     
-    local totalHeight = padding * 2 + timerSectionHeight
+    local totalHeight = headerHeight + padding * 2 + timerSectionHeight
     for i = 1, #deathMessages do
         totalHeight = totalHeight + lineHeight * (1 + #deathMessages[i].valuesText) + 5
     end
     
-    -- Draw background
+    -- Draw background (convert panelY from bottom-up to gl.Rect coordinates)
     gl.Color(0, 0, 0, 0.7)
     gl.Rect(panelX, panelY - totalHeight, panelX + panelW, panelY)
     
@@ -313,15 +314,21 @@ function widget:DrawScreen()
     gl.Rect(panelX, panelY - totalHeight, panelX + 2, panelY)
     gl.Rect(panelX + panelW - 2, panelY - totalHeight, panelX + panelW, panelY)
     
-    -- Draw timer section at top
-    local currentY = panelY - padding
+    -- Draw header section at very top
+    local headerHeight = 20
+    gl.Color(0.1, 0.1, 0.1, 0.95)
+    gl.Rect(panelX + 2, panelY - headerHeight, panelX + panelW - 2, panelY)
+    gl.Color(1, 0.7, 0.2, 1)
+    gl.Text("Queen Death Display", panelX + padding, panelY - 15, 12, "")  -- Moved down 15 pixels
+    
+    -- Draw timer section below header (start after header + padding)
+    local currentY = panelY - headerHeight - padding
     if timerSectionHeight > 0 then
         gl.Color(0.2, 0.2, 0.2, 0.8)
         gl.Rect(panelX + 2, currentY - timerSectionHeight + padding, panelX + panelW - 2, currentY)
         
-        gl.Color(1, 1, 0.5, 1)
-        gl.Text("=== TIMERS ===", panelX + padding, currentY, 12, "o")
-        currentY = currentY - lineHeight
+        -- Remove "=== TIMERS ===" label to avoid overlap with large numbers
+        -- Start directly with the timer values
         
         if graceRemaining and graceRemaining > 0 then
             -- Large text for No Rush (4x size = 44px) - just the time value
@@ -331,9 +338,12 @@ function widget:DrawScreen()
         end
         
         if queenETA then
+            -- Large text for Queens Arrive (4x size = 44px) - just the time value
+            -- Add 40 pixels spacing before this one
+            currentY = currentY - 40
             gl.Color(1, 0.8, 0, 1)
-            gl.Text("Queens Arrive: " .. formatTime(queenETA), panelX + padding + 10, currentY, 11, "n")
-            currentY = currentY - lineHeight
+            gl.Text(formatTime(queenETA), panelX + padding + 10, currentY, 44, "o")
+            currentY = currentY - 50  -- Extra spacing for large text
         elseif remainingQueens then
             -- Large text for Queens Remaining (4x size = 44px) - just the count
             gl.Color(1, 0.5, 0.5, 1)
@@ -371,79 +381,98 @@ function widget:DrawScreen()
     gl.Color(1, 1, 1, 1)
 end
 
-function widget:MousePress(x, y, button)
+function widget:MousePress(mx, my, button)
     if button ~= 1 then return false end  -- Only left mouse button
     
-    local vsx, vsy = gl.GetViewSizes()
-    local mx, my = Spring.GetMouseState()
-    -- Convert mouse coordinates (Spring uses bottom-up, we use top-down)
-    my = vsy - my
-    
-    -- Calculate panel bounds
-    local panelW = 350
+    -- Calculate panel bounds (using same logic as DrawScreen)
+    local panelW = 450
     local lineHeight = 20
     local padding = 10
     local now = GetGameSeconds()
     local graceRemaining, queenETA, remainingQueens = getTimerInfo()
     
-    -- Calculate panel height
+    -- Calculate panel height (same as DrawScreen - include header)
+    local headerHeight = 20
     local timerSectionHeight = 0
     if graceRemaining or queenETA or remainingQueens then
-        timerSectionHeight = lineHeight + padding  -- Header
+        timerSectionHeight = padding  -- No "=== TIMERS ===" label anymore
         if graceRemaining and graceRemaining > 0 then
             timerSectionHeight = timerSectionHeight + 50  -- Large text (44px) + spacing
         end
         if queenETA then
-            timerSectionHeight = timerSectionHeight + lineHeight  -- Normal size
+            timerSectionHeight = timerSectionHeight + 50 + 40  -- Large text (44px) + spacing + extra 40px
         end
         if remainingQueens then
             timerSectionHeight = timerSectionHeight + 50  -- Large text (44px) + spacing
         end
     end
     
-    local totalHeight = padding * 2 + timerSectionHeight
+    local totalHeight = headerHeight + padding * 2 + timerSectionHeight
     for i = 1, #deathMessages do
         totalHeight = totalHeight + lineHeight * (1 + #deathMessages[i].valuesText) + 5
     end
     
-    local panelLeft = panelX
-    local panelRight = panelX + panelW
+    -- Check if click is within panel bounds (panelY is in bottom-up coordinates)
+    -- panelY is the TOP of the panel in bottom-up coords
     local panelTop = panelY
     local panelBottom = panelY - totalHeight
     
-    -- Check if click is within panel bounds
-    if mx >= panelLeft and mx <= panelRight and my <= panelTop and my >= panelBottom then
+    if mx >= panelX and mx <= panelX + panelW and
+       my >= panelBottom and my <= panelTop then
         panelDragging = true
-        dragOffsetX = mx - panelX
-        dragOffsetY = my - panelY
+        panelDragDX = mx - panelX
+        panelDragDY = my - panelY  -- Both in bottom-up coordinates
         return true
     end
     
     return false
 end
 
-function widget:MouseMove(x, y, dx, dy, button)
+function widget:MouseMove(mx, my, dx, dy, button)
     if not panelDragging then return false end
     
     local vsx, vsy = gl.GetViewSizes()
-    local mx, my = Spring.GetMouseState()
-    my = vsy - my
     
-    -- Update panel position
-    panelX = mx - dragOffsetX
-    panelY = my - dragOffsetY
+    -- Update panel position (like LayoutPlannerPlus - both in bottom-up coordinates)
+    panelX = mx - panelDragDX
+    panelY = my - panelDragDY
     
-    -- Keep panel on screen
-    local panelW = 350
+    -- Keep panel on screen (calculate totalHeight first - include header)
+    local panelW = 450
+    local lineHeight = 20
+    local padding = 10
+    local headerHeight = 20
+    local now = GetGameSeconds()
+    local graceRemaining, queenETA, remainingQueens = getTimerInfo()
+    
+    local timerSectionHeight = 0
+    if graceRemaining or queenETA or remainingQueens then
+        timerSectionHeight = padding  -- No "=== TIMERS ===" label anymore
+        if graceRemaining and graceRemaining > 0 then
+            timerSectionHeight = timerSectionHeight + 50
+        end
+        if queenETA then
+            timerSectionHeight = timerSectionHeight + 50 + 40  -- Extra 40px spacing
+        end
+        if remainingQueens then
+            timerSectionHeight = timerSectionHeight + 50
+        end
+    end
+    local totalHeight = headerHeight + padding * 2 + timerSectionHeight
+    for i = 1, #deathMessages do
+        totalHeight = totalHeight + lineHeight * (1 + #deathMessages[i].valuesText) + 5
+    end
+    
+    -- Allow dragging fully to screen edges, with small safety margin
     if panelX < 0 then panelX = 0 end
     if panelX + panelW > vsx then panelX = vsx - panelW end
-    if panelY > vsy then panelY = vsy - 50 end
-    if panelY < 50 then panelY = 50 end
+    if panelY > vsy - 5 then panelY = vsy - 5 end            -- near very top
+    if panelY < totalHeight + 5 then panelY = totalHeight + 5 end  -- near very bottom
     
     return true
 end
 
-function widget:MouseRelease(x, y, button)
+function widget:MouseRelease(mx, my, button)
     if button ~= 1 then return false end
     
     if panelDragging then

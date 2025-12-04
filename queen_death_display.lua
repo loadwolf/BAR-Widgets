@@ -32,9 +32,20 @@ end
 local teamKills = {}
 
 -- Display state
-local deathMessages = {}  -- Table of {time, text, values}
+local deathMessages = {}  -- Table of {time, text, values, dismissed, messageType}
 local MESSAGE_DURATION = 10  -- seconds (no longer used to hide, panel is always visible)
 local MAX_MESSAGES = 5
+
+-- Logging
+local LOG_DIR = "LuaUI/Widgets/QueenDeathDisplay/"
+local logFile = nil
+
+-- Metal income tracking
+local metalIncomeThresholds = {100, 200, 500, 1000, 2000, 5000}  -- Metal per second thresholds
+local metalIncomeTriggered = {}  -- Track which thresholds have been triggered
+local lastMetalCheck = 0
+local lastMetalAmount = 0
+local lastMetalCheckTime = 0
 
 -- Panel position (draggable)
 local panelX = 20
@@ -43,13 +54,50 @@ local panelDragging = false
 local panelDragDX = 0
 local panelDragDY = 0
 
+-- Initialize log file
+local function initLogFile()
+    Spring.CreateDir(LOG_DIR)
+    local timestamp = os.date("%Y%m%d_%H%M%S")
+    local filename = LOG_DIR .. "notifications_" .. timestamp .. ".log"
+    logFile = io.open(filename, "w")
+    if logFile then
+        logFile:write("Queen Death Display - Notification Log\n")
+        logFile:write("Started: " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n")
+        logFile:write("========================================\n\n")
+        Spring.Echo("[Queen Death Display] Logging to: " .. filename)
+    else
+        Spring.Echo("[Queen Death Display] WARNING: Could not open log file: " .. filename)
+    end
+end
+
+-- Write notification to log file
+local function logNotification(messageType, pingText, valuesText)
+    if not logFile then return end
+    
+    local timestamp = os.date("%Y-%m-%d %H:%M:%S")
+    local gameTime = GetGameSeconds()
+    local gameTimeFormatted = formatTime(gameTime)
+    
+    logFile:write(string.format("[%s] Game Time: %s | Type: %s\n", timestamp, gameTimeFormatted, messageType or "Unknown"))
+    logFile:write("  Message: " .. pingText .. "\n")
+    if valuesText and #valuesText > 0 then
+        for _, line in ipairs(valuesText) do
+            logFile:write("  " .. line .. "\n")
+        end
+    end
+    logFile:write("\n")
+    logFile:flush()  -- Ensure it's written immediately
+end
+
 function widget:Initialize()
     Spring.Echo("[Queen Death Display] Widget initialized")
     -- Initialize panel position (in bottom-up coordinates like LayoutPlannerPlus)
     local vsx, vsy = gl.GetViewSizes()
     panelY = 140  -- Bottom-up: Y increases upward from bottom
+    -- Initialize log file
+    initLogFile()
     -- Add a test message to verify drawing works
-    local now = Spring.GetGameSeconds()
+    local now = GetGameSeconds()
     table.insert(deathMessages, {
         time = now,
         pingText = "Queen Death Display Active",
@@ -58,8 +106,19 @@ function widget:Initialize()
         killerCount = 0,
         totalQueens = nil,
         killedQueens = 0,
-        remaining = nil
+        remaining = nil,
+        dismissed = false,
+        messageType = "system"
     })
+end
+
+function widget:Shutdown()
+    if logFile then
+        logFile:write("\n========================================\n")
+        logFile:write("Ended: " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n")
+        logFile:close()
+        logFile = nil
+    end
 end
 
 -- Spring shortcuts
@@ -70,6 +129,8 @@ local GetModOptions = Spring.GetModOptions
 local GetGameSeconds = Spring.GetGameSeconds
 local GetUnitPosition = Spring.GetUnitPosition
 local MarkerAddPoint = Spring.MarkerAddPoint
+local GetTeamResources = Spring.GetTeamResources
+local GetMyTeamID = Spring.GetMyTeamID
 
 -- No shortcuts needed, use gl directly
 
@@ -101,6 +162,20 @@ local function formatTime(seconds)
         return string.format("%dm", minutes)
     else
         return string.format("%ds", secs)
+    end
+end
+
+-- Format metal income (e.g., 1K, 1.5M)
+local function formatMetalIncome(amount)
+    if not amount or amount < 0 then
+        return "0"
+    end
+    if amount >= 1000000 then
+        return string.format("%.1fM", amount / 1000000)
+    elseif amount >= 1000 then
+        return string.format("%.1fK", amount / 1000)
+    else
+        return string.format("%.0f", amount)
     end
 end
 
@@ -205,8 +280,13 @@ local function addDeathMessage(killerName, killerCount, totalQueens, killedQueen
         killerCount = killerCount,
         totalQueens = totalQueens,
         killedQueens = killedQueens,
-        remaining = remaining
+        remaining = remaining,
+        dismissed = false,
+        messageType = "queen_death"
     })
+    
+    -- Log to file
+    logNotification("queen_death", pingText, valuesText)
     
     -- Limit message count
     if #deathMessages > MAX_MESSAGES then
@@ -294,7 +374,7 @@ function widget:DrawScreen()
             timerSectionHeight = timerSectionHeight + 50 + 40  -- Large text (44px) + spacing + extra 40px
         end
         if remainingQueens then
-            timerSectionHeight = timerSectionHeight + 50  -- Large text (44px) + spacing
+            timerSectionHeight = timerSectionHeight + 50 + 40  -- Large text (44px) + spacing + extra 40px
         end
     end
     
@@ -346,6 +426,8 @@ function widget:DrawScreen()
             currentY = currentY - 50  -- Extra spacing for large text
         elseif remainingQueens then
             -- Large text for Queens Remaining (4x size = 44px) - just the count
+            -- Add 40 pixels spacing before this one (like queen arrival)
+            currentY = currentY - 40
             gl.Color(1, 0.5, 0.5, 1)
             if remainingQueens > 0 then
                 gl.Text(tostring(remainingQueens), panelX + padding + 10, currentY, 44, "o")
@@ -359,9 +441,18 @@ function widget:DrawScreen()
     end
     
     -- Draw messages (newest at top)
+    local dismissButtonSize = 16
+    local dismissButtonX = panelX + panelW - padding - dismissButtonSize
+    
     for i = #deathMessages, 1, -1 do
         local msg = deathMessages[i]
+        if msg.dismissed then
+            -- Skip dismissed messages
+            goto continue
+        end
+        
         local alpha = 1.0  -- Keep fully visible at all times
+        local msgStartY = currentY
         
         -- Main ping text (larger, bold)
         gl.Color(1, 0.8, 0, alpha)
@@ -375,7 +466,39 @@ function widget:DrawScreen()
             currentY = currentY - lineHeight
         end
         
+        -- Draw dismiss button on the right (only for notifications, not system messages)
+        if msg.messageType ~= "system" then
+            local msgHeight = msgStartY - currentY
+            local buttonY = msgStartY - msgHeight / 2 - dismissButtonSize / 2  -- Center vertically in message
+            
+            -- Button background
+            gl.Color(0.6, 0.2, 0.2, 0.9)
+            gl.Rect(dismissButtonX, buttonY, dismissButtonX + dismissButtonSize, buttonY + dismissButtonSize)
+            
+            -- Button border
+            gl.Color(0.8, 0.3, 0.3, 1)
+            gl.LineWidth(1)
+            gl.BeginEnd(GL.LINE_LOOP, function()
+                gl.Vertex(dismissButtonX, buttonY)
+                gl.Vertex(dismissButtonX + dismissButtonSize, buttonY)
+                gl.Vertex(dismissButtonX + dismissButtonSize, buttonY + dismissButtonSize)
+                gl.Vertex(dismissButtonX, buttonY + dismissButtonSize)
+            end)
+            
+            -- X symbol
+            gl.Color(1, 1, 1, 1)
+            gl.LineWidth(2)
+            gl.BeginEnd(GL.LINES, function()
+                gl.Vertex(dismissButtonX + 4, buttonY + 4)
+                gl.Vertex(dismissButtonX + dismissButtonSize - 4, buttonY + dismissButtonSize - 4)
+                gl.Vertex(dismissButtonX + dismissButtonSize - 4, buttonY + 4)
+                gl.Vertex(dismissButtonX + 4, buttonY + dismissButtonSize - 4)
+            end)
+        end
+        
         currentY = currentY - 5  -- Spacing between messages
+        
+        ::continue::
     end
     
     gl.Color(1, 1, 1, 1)
@@ -403,7 +526,7 @@ function widget:MousePress(mx, my, button)
             timerSectionHeight = timerSectionHeight + 50 + 40  -- Large text (44px) + spacing + extra 40px
         end
         if remainingQueens then
-            timerSectionHeight = timerSectionHeight + 50  -- Large text (44px) + spacing
+            timerSectionHeight = timerSectionHeight + 50 + 40  -- Large text (44px) + spacing + extra 40px
         end
     end
     
@@ -481,5 +604,91 @@ function widget:MouseRelease(mx, my, button)
     end
     
     return false
+end
+
+-- Add a metal income notification
+local function addMetalIncomeNotification(income, threshold)
+    local now = GetGameSeconds()
+    local formattedIncome = formatMetalIncome(income)
+    local formattedThreshold = formatMetalIncome(threshold)
+    
+    local pingText = string.format("Metal Income: %s/s (Reached %s/s)", formattedIncome, formattedThreshold)
+    
+    local valuesText = {}
+    table.insert(valuesText, string.format("Current Income: %s/s", formattedIncome))
+    table.insert(valuesText, string.format("Threshold: %s/s", formattedThreshold))
+    
+    table.insert(deathMessages, {
+        time = now,
+        pingText = pingText,
+        valuesText = valuesText,
+        killerName = nil,
+        killerCount = 0,
+        totalQueens = nil,
+        killedQueens = 0,
+        remaining = nil,
+        dismissed = false,
+        messageType = "metal_income"
+    })
+    
+    -- Limit message count
+    if #deathMessages > MAX_MESSAGES then
+        table.remove(deathMessages, 1)
+    end
+    
+    Spring.Echo("[Queen Death Display] " .. pingText)
+    
+    -- Log to file
+    logNotification("metal_income", pingText, valuesText)
+end
+
+-- Check metal income and trigger notifications
+local function checkMetalIncome()
+    local myTeamID = GetMyTeamID()
+    if not myTeamID or myTeamID < 0 then
+        return
+    end
+    
+    local now = GetGameSeconds()
+    local metal, _ = GetTeamResources(myTeamID, "metal")
+    
+    if not metal then
+        return
+    end
+    
+    -- Initialize tracking
+    if lastMetalCheckTime == 0 then
+        lastMetalAmount = metal
+        lastMetalCheckTime = now
+        return
+    end
+    
+    -- Calculate income rate (check every 2 seconds for accuracy)
+    local timeDiff = now - lastMetalCheckTime
+    if timeDiff < 2.0 then
+        return
+    end
+    
+    local metalDiff = metal - lastMetalAmount
+    local incomeRate = metalDiff / timeDiff
+    
+    -- Update tracking
+    lastMetalAmount = metal
+    lastMetalCheckTime = now
+    
+    -- Check thresholds
+    for _, threshold in ipairs(metalIncomeThresholds) do
+        if incomeRate >= threshold and not metalIncomeTriggered[threshold] then
+            metalIncomeTriggered[threshold] = true
+            addMetalIncomeNotification(incomeRate, threshold)
+        end
+    end
+end
+
+function widget:GameFrame(frame)
+    -- Check metal income roughly once per second (every 30 frames at 30fps)
+    if frame % 30 == 0 then
+        checkMetalIncome()
+    end
 end
 

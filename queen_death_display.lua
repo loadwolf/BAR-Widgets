@@ -105,13 +105,8 @@ local function logNotification(messageType, pingText, valuesText)
     local gameTime = GetGameSeconds()
     local gameTimeFormatted = formatTime(gameTime)
     
-    logFile:write(string.format("[%s] Game Time: %s | Type: %s\n", timestamp, gameTimeFormatted, messageType or "Unknown"))
-    logFile:write("  Message: " .. pingText .. "\n")
-    if valuesText and #valuesText > 0 then
-        for _, line in ipairs(valuesText) do
-            logFile:write("  " .. line .. "\n")
-        end
-    end
+    -- Just log the ping text - no verbose details (they're duplicates)
+    logFile:write(string.format("[%s] Game Time: %s | %s\n", timestamp, gameTimeFormatted, pingText))
     logFile:write("\n")
     logFile:flush()  -- Ensure it's written immediately
 end
@@ -255,21 +250,21 @@ local function addDeathMessage(killerName, killerCount, totalQueens, killedQueen
         pingText = pingText .. " (ALL DEFEATED!)"
     end
     
-    -- Build detailed values text for display
+    -- Build detailed values text for display (commented out - main ping text is sufficient)
     local valuesText = {}
-    table.insert(valuesText, string.format("Killer: %s", killerName or "Unknown"))
-    if killerCount > 0 then
-        table.insert(valuesText, string.format("Player Kills: %d", killerCount))
-    end
-    if totalQueens then
-        table.insert(valuesText, string.format("Total Queens: %d", totalQueens))
-    end
-    if killedQueens then
-        table.insert(valuesText, string.format("Queens Killed: %d", killedQueens))
-    end
-    if remaining then
-        table.insert(valuesText, string.format("Queens Remaining: %d", remaining))
-    end
+    -- table.insert(valuesText, string.format("Killer: %s", killerName or "Unknown"))
+    -- if killerCount > 0 then
+    --     table.insert(valuesText, string.format("Player Kills: %d", killerCount))
+    -- end
+    -- if totalQueens then
+    --     table.insert(valuesText, string.format("Total Queens: %d", totalQueens))
+    -- end
+    -- if killedQueens then
+    --     table.insert(valuesText, string.format("Queens Killed: %d", killedQueens))
+    -- end
+    -- if remaining then
+    --     table.insert(valuesText, string.format("Queens Remaining: %d", remaining))
+    -- end
     
     -- Add to messages list
     table.insert(deathMessages, {
@@ -609,9 +604,10 @@ local function addMetalIncomeNotification(income, threshold)
     
     local pingText = string.format("Metal Income: %s/s (Reached %s/s)", formattedIncome, formattedThreshold)
     
+    -- Build detailed values text for display (commented out - main ping text is sufficient)
     local valuesText = {}
-    table.insert(valuesText, string.format("Current Income: %s/s", formattedIncome))
-    table.insert(valuesText, string.format("Threshold: %s/s", formattedThreshold))
+    -- table.insert(valuesText, string.format("Current Income: %s/s", formattedIncome))
+    -- table.insert(valuesText, string.format("Threshold: %s/s", formattedThreshold))
     
     table.insert(deathMessages, {
         time = now,

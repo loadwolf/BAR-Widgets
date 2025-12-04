@@ -54,6 +54,33 @@ local panelDragging = false
 local panelDragDX = 0
 local panelDragDY = 0
 
+-- Spring shortcuts (define early so they can be used in functions defined later)
+local GetPlayerList = Spring.GetPlayerList
+local GetPlayerInfo = Spring.GetPlayerInfo
+local GetGameRulesParam = Spring.GetGameRulesParam
+local GetModOptions = Spring.GetModOptions
+local GetGameSeconds = Spring.GetGameSeconds
+local GetUnitPosition = Spring.GetUnitPosition
+local MarkerAddPoint = Spring.MarkerAddPoint
+local GetTeamResources = Spring.GetTeamResources
+local GetMyTeamID = Spring.GetMyTeamID
+
+-- Format time as "Xm Ys" or "Zs"
+local function formatTime(seconds)
+    if not seconds or seconds <= 0 then
+        return "0s"
+    end
+    local minutes = math.floor(seconds / 60)
+    local secs = math.floor(seconds % 60)
+    if minutes > 0 and secs > 0 then
+        return string.format("%dm %ds", minutes, secs)
+    elseif minutes > 0 then
+        return string.format("%dm", minutes)
+    else
+        return string.format("%ds", secs)
+    end
+end
+
 -- Initialize log file
 local function initLogFile()
     Spring.CreateDir(LOG_DIR)
@@ -121,17 +148,6 @@ function widget:Shutdown()
     end
 end
 
--- Spring shortcuts
-local GetPlayerList = Spring.GetPlayerList
-local GetPlayerInfo = Spring.GetPlayerInfo
-local GetGameRulesParam = Spring.GetGameRulesParam
-local GetModOptions = Spring.GetModOptions
-local GetGameSeconds = Spring.GetGameSeconds
-local GetUnitPosition = Spring.GetUnitPosition
-local MarkerAddPoint = Spring.MarkerAddPoint
-local GetTeamResources = Spring.GetTeamResources
-local GetMyTeamID = Spring.GetMyTeamID
-
 -- No shortcuts needed, use gl directly
 
 -- Get player name for a team
@@ -147,22 +163,6 @@ local function getKillerName(teamID)
         end
     end
     return "Team " .. tostring(teamID)
-end
-
--- Format time as "Xm Ys" or "Zs"
-local function formatTime(seconds)
-    if not seconds or seconds <= 0 then
-        return "0s"
-    end
-    local minutes = math.floor(seconds / 60)
-    local secs = math.floor(seconds % 60)
-    if minutes > 0 and secs > 0 then
-        return string.format("%dm %ds", minutes, secs)
-    elseif minutes > 0 then
-        return string.format("%dm", minutes)
-    else
-        return string.format("%ds", secs)
-    end
 end
 
 -- Format metal income (e.g., 1K, 1.5M)
@@ -446,59 +446,54 @@ function widget:DrawScreen()
     
     for i = #deathMessages, 1, -1 do
         local msg = deathMessages[i]
-        if msg.dismissed then
-            -- Skip dismissed messages
-            goto continue
-        end
-        
-        local alpha = 1.0  -- Keep fully visible at all times
-        local msgStartY = currentY
-        
-        -- Main ping text (larger, bold)
-        gl.Color(1, 0.8, 0, alpha)
-        gl.Text(msg.pingText, panelX + padding, currentY, 14, "o")
-        currentY = currentY - lineHeight - 2
-        
-        -- Values (smaller, white)
-        gl.Color(1, 1, 1, alpha * 0.8)
-        for _, valueLine in ipairs(msg.valuesText) do
-            gl.Text(valueLine, panelX + padding + 10, currentY, 11, "n")
-            currentY = currentY - lineHeight
-        end
-        
-        -- Draw dismiss button on the right (only for notifications, not system messages)
-        if msg.messageType ~= "system" then
-            local msgHeight = msgStartY - currentY
-            local buttonY = msgStartY - msgHeight / 2 - dismissButtonSize / 2  -- Center vertically in message
+        if not msg.dismissed then
+            local alpha = 1.0  -- Keep fully visible at all times
+            local msgStartY = currentY
             
-            -- Button background
-            gl.Color(0.6, 0.2, 0.2, 0.9)
-            gl.Rect(dismissButtonX, buttonY, dismissButtonX + dismissButtonSize, buttonY + dismissButtonSize)
+            -- Main ping text (larger, bold)
+            gl.Color(1, 0.8, 0, alpha)
+            gl.Text(msg.pingText, panelX + padding, currentY, 14, "o")
+            currentY = currentY - lineHeight - 2
             
-            -- Button border
-            gl.Color(0.8, 0.3, 0.3, 1)
-            gl.LineWidth(1)
-            gl.BeginEnd(GL.LINE_LOOP, function()
-                gl.Vertex(dismissButtonX, buttonY)
-                gl.Vertex(dismissButtonX + dismissButtonSize, buttonY)
-                gl.Vertex(dismissButtonX + dismissButtonSize, buttonY + dismissButtonSize)
-                gl.Vertex(dismissButtonX, buttonY + dismissButtonSize)
-            end)
+            -- Values (smaller, white)
+            gl.Color(1, 1, 1, alpha * 0.8)
+            for _, valueLine in ipairs(msg.valuesText) do
+                gl.Text(valueLine, panelX + padding + 10, currentY, 11, "n")
+                currentY = currentY - lineHeight
+            end
             
-            -- X symbol
-            gl.Color(1, 1, 1, 1)
-            gl.LineWidth(2)
-            gl.BeginEnd(GL.LINES, function()
-                gl.Vertex(dismissButtonX + 4, buttonY + 4)
-                gl.Vertex(dismissButtonX + dismissButtonSize - 4, buttonY + dismissButtonSize - 4)
-                gl.Vertex(dismissButtonX + dismissButtonSize - 4, buttonY + 4)
-                gl.Vertex(dismissButtonX + 4, buttonY + dismissButtonSize - 4)
-            end)
+            -- Draw dismiss button on the right (only for notifications, not system messages)
+            if msg.messageType ~= "system" then
+                local msgHeight = msgStartY - currentY
+                local buttonY = msgStartY - msgHeight / 2 - dismissButtonSize / 2  -- Center vertically in message
+                
+                -- Button background
+                gl.Color(0.6, 0.2, 0.2, 0.9)
+                gl.Rect(dismissButtonX, buttonY, dismissButtonX + dismissButtonSize, buttonY + dismissButtonSize)
+                
+                -- Button border
+                gl.Color(0.8, 0.3, 0.3, 1)
+                gl.LineWidth(1)
+                gl.BeginEnd(GL.LINE_LOOP, function()
+                    gl.Vertex(dismissButtonX, buttonY)
+                    gl.Vertex(dismissButtonX + dismissButtonSize, buttonY)
+                    gl.Vertex(dismissButtonX + dismissButtonSize, buttonY + dismissButtonSize)
+                    gl.Vertex(dismissButtonX, buttonY + dismissButtonSize)
+                end)
+                
+                -- X symbol
+                gl.Color(1, 1, 1, 1)
+                gl.LineWidth(2)
+                gl.BeginEnd(GL.LINES, function()
+                    gl.Vertex(dismissButtonX + 4, buttonY + 4)
+                    gl.Vertex(dismissButtonX + dismissButtonSize - 4, buttonY + dismissButtonSize - 4)
+                    gl.Vertex(dismissButtonX + dismissButtonSize - 4, buttonY + 4)
+                    gl.Vertex(dismissButtonX + 4, buttonY + dismissButtonSize - 4)
+                end)
+            end
+            
+            currentY = currentY - 5  -- Spacing between messages
         end
-        
-        currentY = currentY - 5  -- Spacing between messages
-        
-        ::continue::
     end
     
     gl.Color(1, 1, 1, 1)

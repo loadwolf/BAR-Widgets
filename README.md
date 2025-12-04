@@ -11,7 +11,10 @@ To-do list
  - None for now :)
 
 Done
- - Added scroll bar to Load menu when  box gets full - Done 2025-12-02
+ - fix cursor to show when typing - Done 2025-12-04
+ - fix close button and first saved item inacessable under menu - Done 2025-12-04
+ - Fix headder flip and text placement on load menu - Done 2025-12-04
+ - Add scroll bar to Load menu when  box gets full - Done 2025-12-02
  - Invert - Done 2025-12-02
  - Rotate - Done 2025-12-02
  - Add snapping options (middle of grid square and on-grid alignment) - Done 2025-12-02
@@ -21,4 +24,4 @@ Done
  - Filter items rise top not bottom  - Done 2025-12-02
  - Render speed bug for large shapes - Done 2025-12-02
  - move layout around with ASDW keys - Done 2025-12-02
- - Fixed button click location offset error - Done 2025-12-02
+ - Fix button click location offset error - Done 2025-12-02

@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Queen Death Display Widget - Scope Document</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        h1 {
+            color: #ff8c00;
+            border-bottom: 3px solid #ff8c00;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #ffaa44;
+            margin-top: 30px;
+            border-left: 4px solid #ff8c00;
+            padding-left: 15px;
+        }
+        h3 {
+            color: #ffcc88;
+            margin-top: 20px;
+        }
+        .section {
+            background: #2a2a2a;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            border: 1px solid #444;
+        }
+        .feature-list {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        .feature-list li {
+            padding: 8px 0;
+            padding-left: 25px;
+            position: relative;
+        }
+        .feature-list li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #4caf50;
+            font-weight: bold;
+        }
+        .code-block {
+            background: #1e1e1e;
+            border: 1px solid #444;
+            border-left: 4px solid #ff8c00;
+            padding: 15px;
+            margin: 15px 0;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+            border-radius: 4px;
+        }
+        .data-source {
+            background: #2d2d2d;
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 3px solid #4caf50;
+        }
+        .display-format {
+            background: #2d2d2d;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .display-format pre {
+            margin: 0;
+            color: #ffcc88;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            border: 1px solid #444;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background: #3a3a3a;
+            color: #ffaa44;
+        }
+        tr:nth-child(even) {
+            background: #252525;
+        }
+        .highlight {
+            background: #ff8c00;
+            color: #1a1a1a;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .meta-info {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 15px 0;
+        }
+        .meta-info strong {
+            color: #ffaa44;
+        }
+    </style>
+</head>
+<body>
+    <h1>Queen Death Display Widget - Scope Document</h1>
+    
+    <div class="meta-info">
+        <p><strong>Widget Name:</strong> Queen Death Display</p>
+        <p><strong>File:</strong> queen_death_display.lua</p>
+        <p><strong>Version:</strong> 1.0</p>
+        <p><strong>Author:</strong> Auto</p>
+        <p><strong>Purpose:</strong> Displays real-time information about Raptor Queen deaths, game timers, and statistics in a persistent on-screen panel with map pings.</p>
+    </div>
+
+    <div class="section">
+        <h2>Overview</h2>
+        <p>The Queen Death Display widget provides comprehensive real-time information about Raptor Queen deaths in Beyond All Reason. It displays:</p>
+        <ul class="feature-list">
+            <li>Queen death notifications with killer information</li>
+            <li>Countdown timers for grace period and queen arrival</li>
+            <li>Queen statistics (total, killed, remaining)</li>
+            <li>Player kill counts per team</li>
+            <li>Map pings at queen death locations</li>
+        </ul>
+        <p>The widget maintains a persistent on-screen panel on the left side of the screen that is always visible and updates in real-time.</p>
+    </div>
+
+    <div class="section">
+        <h2>Core Features</h2>
+        
+        <h3>1. Queen Death Tracking</h3>
+        <ul class="feature-list">
+            <li>Detects when any Raptor Queen unit dies</li>
+            <li>Identifies the killer (team/player who delivered the killing blow)</li>
+            <li>Tracks kill counts per team/player</li>
+            <li>Records death location for map pinging</li>
+            <li>Maintains history of up to 5 recent deaths</li>
+        </ul>
+
+        <h3>2. Timer Display</h3>
+        <ul class="feature-list">
+            <li><span class="highlight">No Rush Timer:</span> Countdown to when grace period ends (green text)</li>
+            <li><span class="highlight">Queens Arrive:</span> Countdown to when queens spawn (orange text, shown after grace period)</li>
+            <li><span class="highlight">Queens Remaining:</span> Live count of remaining queens (red text, shown when queens are active)</li>
+        </ul>
+
+        <h3>3. Visual Display</h3>
+        <ul class="feature-list">
+            <li>Persistent left-side panel (always visible)</li>
+            <li>Timer section at top with dark background</li>
+            <li>Death message history below timers</li>
+            <li>Orange border and highlight colors for visibility</li>
+            <li>Messages never fade or disappear (permanent display)</li>
+        </ul>
+
+        <h3>4. Map Integration</h3>
+        <ul class="feature-list">
+            <li>Creates map marker/ping at queen death location</li>
+            <li>Ping text includes killer name, kill count, and remaining queens</li>
+            <li>Synchronized with on-screen display</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Data Sources</h2>
+        
+        <h3>Game Rules Parameters</h3>
+        <div class="data-source">
+            <table>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Purpose</th>
+                    <th>Used For</th>
+                </tr>
+                <tr>
+                    <td><code>raptorGracePeriod</code></td>
+                    <td>Time when grace period ends</td>
+                    <td>No Rush countdown timer</td>
+                </tr>
+                <tr>
+                    <td><code>raptorQueenAnger</code></td>
+                    <td>Current queen anger level (0-100)</td>
+                    <td>Queen arrival ETA calculation</td>
+                </tr>
+                <tr>
+                    <td><code>RaptorQueenAngerGain_Base</code></td>
+                    <td>Base anger gain rate</td>
+                    <td>Queen arrival ETA calculation</td>
+                </tr>
+                <tr>
+                    <td><code>RaptorQueenAngerGain_Aggression</code></td>
+                    <td>Aggression-based anger gain</td>
+                    <td>Queen arrival ETA calculation</td>
+                </tr>
+                <tr>
+                    <td><code>RaptorQueenAngerGain_Eco</code></td>
+                    <td>Economy-based anger gain</td>
+                    <td>Queen arrival ETA calculation</td>
+                </tr>
+                <tr>
+                    <td><code>raptorQueenCount</code></td>
+                    <td>Total number of queens in game</td>
+                    <td>Queen statistics display</td>
+                </tr>
+                <tr>
+                    <td><code>raptorQueensKilled</code></td>
+                    <td>Number of queens killed so far</td>
+                    <td>Queen statistics display</td>
+                </tr>
+            </table>
+        </div>
+
+        <h3>Mod Options</h3>
+        <div class="data-source">
+            <ul>
+                <li><code>raptor_queen_count</code> - Fallback for total queen count if game rule not available</li>
+            </ul>
+        </div>
+
+        <h3>Spring API Calls</h3>
+        <div class="data-source">
+            <ul>
+                <li><code>Spring.GetUnitPosition()</code> - Queen death location</li>
+                <li><code>Spring.GetPlayerList()</code> - Get players on a team</li>
+                <li><code>Spring.GetPlayerInfo()</code> - Get player name</li>
+                <li><code>Spring.MarkerAddPoint()</code> - Create map ping</li>
+                <li><code>Spring.GetGameSeconds()</code> - Current game time</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Display Format</h2>
+        
+        <h3>Timer Section (Top of Panel)</h3>
+        <div class="display-format">
+            <pre>
+=== TIMERS ===
+No Rush: 5m 23s          (green, shown during grace period)
+Queens Arrive: 2m 15s    (orange, shown after grace period ends)
+Queens Remaining: 18     (red, shown when queens are active)
+            </pre>
+        </div>
+
+        <h3>Death Message Format</h3>
+        <div class="display-format">
+            <pre>
+Queen Killed by Player1 #2 (18 remaining)    (orange, bold, main line)
+  Killer: Player1                            (white, detail)
+  Player Kills: 2                            (white, detail)
+  Total Queens: 20                           (white, detail)
+  Queens Killed: 2                           (white, detail)
+  Queens Remaining: 18                        (white, detail)
+            </pre>
+        </div>
+
+        <h3>Map Ping Format</h3>
+        <div class="display-format">
+            <pre>
+"Queen Killed by Player1 #2 (18 remaining)"
+            </pre>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Queen Unit Detection</h2>
+        <p>The widget detects the following Raptor Queen unit types:</p>
+        <div class="code-block">
+raptor_queen_easy
+raptor_queen_veryeasy
+raptor_queen_hard
+raptor_queen_veryhard
+raptor_queen_epic
+raptor_queen_normal
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Technical Implementation</h2>
+        
+        <h3>Widget Lifecycle</h3>
+        <ul>
+            <li><strong>Initialize:</strong> Sets up queen unit detection, creates initial test message</li>
+            <li><strong>UnitDestroyed:</strong> Handles queen death events, tracks kills, creates pings</li>
+            <li><strong>DrawScreen:</strong> Renders panel every frame with updated timers and messages</li>
+        </ul>
+
+        <h3>Data Structures</h3>
+        <div class="code-block">
+teamKills = {}  -- Tracks kills per team: teamKills[teamID] = count
+deathMessages = {  -- Array of death records
+    {
+        time = gameSeconds,
+        pingText = "Queen Killed by...",
+        valuesText = {"Killer: ...", "Player Kills: ...", ...},
+        killerName = "Player1",
+        killerCount = 2,
+        totalQueens = 20,
+        killedQueens = 2,
+        remaining = 18
+    },
+    ...
+}
+        </div>
+
+        <h3>Key Functions</h3>
+        <ul>
+            <li><code>getKillerName(teamID)</code> - Resolves team ID to player name</li>
+            <li><code>getQueenTotals()</code> - Gets total/killed/remaining queen counts</li>
+            <code>getTimerInfo()</code> - Calculates grace period, queen ETA, remaining count</li>
+            <li><code>formatTime(seconds)</code> - Formats seconds as "Xm Ys" or "Zs"</li>
+            <li><code>addDeathMessage(...)</code> - Creates and stores death record</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Timer Calculation Logic</h2>
+        
+        <h3>No Rush Timer</h3>
+        <div class="code-block">
+graceRemaining = max(0, raptorGracePeriod - currentGameTime)
+        </div>
+        <p>Shown in green when > 0. Disappears when grace period ends.</p>
+
+        <h3>Queen Arrival ETA</h3>
+        <div class="code-block">
+if (gracePeriod ended AND anger < 100) {
+    totalGainRate = Base + Aggression + Eco
+    angerRemaining = 100 - currentAnger
+    queenETA = angerRemaining / totalGainRate
+}
+        </div>
+        <p>Shown in orange after grace period ends, until queens spawn (anger reaches 100).</p>
+
+        <h3>Queens Remaining</h3>
+        <div class="code-block">
+remaining = totalQueens - killedQueens
+        </div>
+        <p>Shown in red when queens are active (after grace period).</p>
+    </div>
+
+    <div class="section">
+        <h2>UI Specifications</h2>
+        
+        <h3>Panel Position & Size</h3>
+        <ul>
+            <li><strong>Position:</strong> Left side of screen, 20px from left edge</li>
+            <li><strong>Top Position:</strong> 100px from top of screen</li>
+            <li><strong>Width:</strong> 350px</li>
+            <li><strong>Height:</strong> Dynamic (based on content)</li>
+        </ul>
+
+        <h3>Colors</h3>
+        <ul>
+            <li><strong>Background:</strong> Black (0, 0, 0) at 70% opacity</li>
+            <li><strong>Border:</strong> Orange (1, 0.5, 0)</li>
+            <li><strong>Timer Section Background:</strong> Dark gray (0.2, 0.2, 0.2) at 80% opacity</li>
+            <li><strong>No Rush Timer:</strong> Green (0.5, 1, 0.5)</li>
+            <li><strong>Queen Arrival Timer:</strong> Orange (1, 0.8, 0)</li>
+            <li><strong>Queens Remaining:</strong> Red (1, 0.5, 0.5)</li>
+            <li><strong>Death Message Title:</strong> Orange (1, 0.8, 0)</li>
+            <li><strong>Detail Text:</strong> White (1, 1, 1) at 80% opacity</li>
+        </ul>
+
+        <h3>Typography</h3>
+        <ul>
+            <li><strong>Timer Section Header:</strong> 12px, bold</li>
+            <li><strong>Timer Values:</strong> 11px, normal</li>
+            <li><strong>Death Message Title:</strong> 14px, bold</li>
+            <li><strong>Detail Lines:</strong> 11px, normal</li>
+            <li><strong>Line Height:</strong> 20px</li>
+            <li><strong>Padding:</strong> 10px</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Behavior & Edge Cases</h2>
+        
+        <h3>Killer Detection</h3>
+        <ul>
+            <li>If <code>attackerTeam</code> is nil or invalid, killer name shows as "Unknown"</li>
+            <li>Kill count only increments for valid attacker teams (>= 0)</li>
+            <li>Kill count persists for the entire game session</li>
+        </ul>
+
+        <h3>Timer Display Logic</h3>
+        <ul>
+            <li>No Rush timer only shows when grace period is active (> 0)</li>
+            <li>Queen Arrival ETA only shows after grace period ends and before queens spawn</li>
+            <li>Queens Remaining shows when queens are active (after grace period)</li>
+            <li>If all queens are defeated, shows "All Queens Defeated!" in red</li>
+        </ul>
+
+        <h3>Message History</h3>
+        <ul>
+            <li>Maximum of 5 death messages stored</li>
+            <li>Oldest message removed when limit reached</li>
+            <li>Messages never auto-delete (permanent display)</li>
+            <li>If no messages exist, shows "Queen Death Display Active" placeholder</li>
+        </ul>
+
+        <h3>Data Availability</h3>
+        <ul>
+            <li>If game rules are unavailable, uses mod options as fallback</li>
+            <li>If total queen count is unknown, remaining count is not shown</li>
+            <li>Timer calculations handle nil/zero values gracefully</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Future Enhancement Possibilities</h2>
+        <ul>
+            <li>Configurable panel position (draggable)</li>
+            <li>Configurable message history limit</li>
+            <li>Sound notification on queen death</li>
+            <li>Damage tracking per queen (who did most damage, not just last hit)</li>
+            <li>Statistics summary (total kills per player, average time between kills)</li>
+            <li>Export death log to file</li>
+            <li>Color coding based on difficulty level</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Dependencies</h2>
+        <ul>
+            <li><strong>Spring Engine API:</strong> Core game interaction</li>
+            <li><strong>OpenGL (gl library):</strong> Screen rendering</li>
+            <li><strong>Raptor Game Mode:</strong> Requires Raptors mod to be active</li>
+            <li><strong>Game Rules:</strong> Depends on Raptor-specific game rules being set</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Performance Considerations</h2>
+        <ul>
+            <li>DrawScreen called every frame - optimized to only draw when panel is visible</li>
+            <li>Timer calculations performed every frame - minimal computational cost</li>
+            <li>Message history limited to 5 entries to prevent memory growth</li>
+            <li>No expensive operations in UnitDestroyed callback</li>
+            <li>Uses local Spring API shortcuts to reduce function call overhead</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Testing Scenarios</h2>
+        <ul>
+            <li>Widget loads in non-Raptor game (should show placeholder, no errors)</li>
+            <li>Queen dies with valid attacker team (should show killer info)</li>
+            <li>Queen dies with nil attacker team (should show "Unknown" killer)</li>
+            <li>Multiple queens die in sequence (should maintain history)</li>
+            <li>Grace period countdown (should update every second)</li>
+            <li>Queen arrival ETA calculation (should show after grace period)</li>
+            <li>All queens defeated (should show "ALL DEFEATED!")</li>
+            <li>Widget reloaded mid-game (should maintain kill counts)</li>
+        </ul>
+    </div>
+
+    <footer style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #444; color: #888; text-align: center;">
+        <p>Queen Death Display Widget - Scope Document v1.0</p>
+        <p>Generated: 2025-01-XX</p>
+    </footer>
+</body>
+</html>
+

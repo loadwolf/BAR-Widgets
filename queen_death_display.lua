@@ -41,7 +41,7 @@ local LOG_DIR = "LuaUI/Widgets/QueenDeathDisplay/"
 local logFile = nil
 
 -- Metal income tracking
-local metalIncomeThresholds = {100, 200, 500, 1000, 2000, 5000}  -- Metal per second thresholds
+local metalIncomeThresholds = {100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000, 2000000,5000000,10000000,50000000,100000000, }  -- Metal per second thresholds
 local metalIncomeTriggered = {}  -- Track which thresholds have been triggered
 local lastMetalCheck = 0
 local lastMetalAmount = 0
@@ -437,7 +437,8 @@ function widget:DrawScreen()
     
     -- Draw messages (newest at top)
     local dismissButtonSize = 16
-    local dismissButtonX = panelX + panelW - padding - dismissButtonSize
+    local dismissButtonX = panelX + padding  -- Start of line (left side)
+    local textStartX = dismissButtonX + dismissButtonSize + 5  -- Text starts after button
     
     for i = #deathMessages, 1, -1 do
         local msg = deathMessages[i]
@@ -445,22 +446,9 @@ function widget:DrawScreen()
             local alpha = 1.0  -- Keep fully visible at all times
             local msgStartY = currentY
             
-            -- Main ping text (larger, bold)
-            gl.Color(1, 0.8, 0, alpha)
-            gl.Text(msg.pingText, panelX + padding, currentY, 14, "o")
-            currentY = currentY - lineHeight - 2
-            
-            -- Values (smaller, white)
-            gl.Color(1, 1, 1, alpha * 0.8)
-            for _, valueLine in ipairs(msg.valuesText) do
-                gl.Text(valueLine, panelX + padding + 10, currentY, 11, "n")
-                currentY = currentY - lineHeight
-            end
-            
-            -- Draw dismiss button on the right (only for notifications, not system messages)
+            -- Draw dismiss button at start of line (only for notifications, not system messages)
             if msg.messageType ~= "system" then
-                local msgHeight = msgStartY - currentY
-                local buttonY = msgStartY - msgHeight / 2 - dismissButtonSize / 2  -- Center vertically in message
+                local buttonY = msgStartY - dismissButtonSize  -- Aligned with first line of text
                 
                 -- Button background
                 gl.Color(0.6, 0.2, 0.2, 0.9)
@@ -485,6 +473,18 @@ function widget:DrawScreen()
                     gl.Vertex(dismissButtonX + dismissButtonSize - 4, buttonY + 4)
                     gl.Vertex(dismissButtonX + 4, buttonY + dismissButtonSize - 4)
                 end)
+            end
+            
+            -- Main ping text (larger, bold) - starts after button
+            gl.Color(1, 0.8, 0, alpha)
+            gl.Text(msg.pingText, textStartX, currentY, 14, "o")
+            currentY = currentY - lineHeight - 2
+            
+            -- Values (smaller, white)
+            gl.Color(1, 1, 1, alpha * 0.8)
+            for _, valueLine in ipairs(msg.valuesText) do
+                gl.Text(valueLine, textStartX + 10, currentY, 11, "n")
+                currentY = currentY - lineHeight
             end
             
             currentY = currentY - 5  -- Spacing between messages
@@ -530,8 +530,60 @@ function widget:MousePress(mx, my, button)
     local panelTop = panelY
     local panelBottom = panelY - totalHeight
     
+    -- First, check for dismiss button clicks (before panel dragging)
     if mx >= panelX and mx <= panelX + panelW and
        my >= panelBottom and my <= panelTop then
+        
+        -- Check each message's dismiss button
+        local dismissButtonSize = 16
+        local dismissButtonX = panelX + padding  -- Same as DrawScreen
+        local currentY = panelY - headerHeight - padding
+        
+        -- Skip timer section
+        if timerSectionHeight > 0 then
+            if graceRemaining and graceRemaining > 0 then
+                currentY = currentY - 50
+            end
+            if queenETA then
+                currentY = currentY - 40 - 50
+            elseif remainingQueens then
+                currentY = currentY - 40 - 50
+            end
+            currentY = currentY - 5
+        end
+        
+        -- Check messages (newest at top, same order as DrawScreen)
+        for i = #deathMessages, 1, -1 do
+            local msg = deathMessages[i]
+            if not msg.dismissed and msg.messageType ~= "system" then
+                local msgStartY = currentY
+                local buttonY = msgStartY - dismissButtonSize  -- Same calculation as DrawScreen
+                
+                -- Check if click is on this button
+                if mx >= dismissButtonX and mx <= dismissButtonX + dismissButtonSize and
+                   my >= buttonY and my <= buttonY + dismissButtonSize then
+                    -- Dismiss this message
+                    msg.dismissed = true
+                    return true  -- Consume the click
+                end
+                
+                -- Move to next message position
+                currentY = currentY - lineHeight - 2  -- Main text
+                for _ = 1, #msg.valuesText do
+                    currentY = currentY - lineHeight  -- Value lines
+                end
+                currentY = currentY - 5  -- Spacing
+            else
+                -- System message or already dismissed - still need to account for its space
+                currentY = currentY - lineHeight - 2
+                for _ = 1, #msg.valuesText do
+                    currentY = currentY - lineHeight
+                end
+                currentY = currentY - 5
+            end
+        end
+        
+        -- If we get here, click was in panel but not on a button - allow dragging
         panelDragging = true
         panelDragDX = mx - panelX
         panelDragDY = my - panelY  -- Both in bottom-up coordinates

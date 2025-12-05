@@ -34,7 +34,7 @@ local teamKills = {}
 -- Display state
 local deathMessages = {}  -- Table of {time, text, values, dismissed, messageType}
 local MESSAGE_DURATION = 10  -- seconds (no longer used to hide, panel is always visible)
-local MAX_MESSAGES = 5
+local MAX_MESSAGES = 10
 
 -- Logging
 local LOG_DIR = "LuaUI/Widgets/QueenDeathDisplay/"
@@ -449,7 +449,13 @@ function widget:DrawScreen()
             
             -- Draw dismiss button at start of line (only for notifications, not system messages)
             if msg.messageType ~= "system" then
-                local buttonY = msgStartY - dismissButtonSize  -- Aligned with first line of text
+                -- Align button with text: text is 14px (size 14), button is 16px
+                -- Text baseline is at currentY, text extends upward to currentY + ~14
+                -- Position button so its center aligns with text center (text center at currentY + 7)
+                -- Button center should be at currentY + 7, so button bottom at currentY - 1
+                -- Move button 10 pixels higher for better alignment
+                local textHeight = 14
+                local buttonY = msgStartY - dismissButtonSize + (dismissButtonSize - textHeight) / 2 + 10  -- Center-align with text, moved higher
                 
                 -- Button background
                 gl.Color(0.6, 0.2, 0.2, 0.9)
@@ -558,7 +564,8 @@ function widget:MousePress(mx, my, button)
             local msg = deathMessages[i]
             if not msg.dismissed and msg.messageType ~= "system" then
                 local msgStartY = currentY
-                local buttonY = msgStartY - dismissButtonSize  -- Same calculation as DrawScreen
+                local textHeight = 14
+                local buttonY = msgStartY - dismissButtonSize + (dismissButtonSize - textHeight) / 2 + 10  -- Same calculation as DrawScreen
                 
                 -- Check if click is on this button
                 if mx >= dismissButtonX and mx <= dismissButtonX + dismissButtonSize and

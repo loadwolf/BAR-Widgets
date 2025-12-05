@@ -115,7 +115,8 @@ function widget:Initialize()
     Spring.Echo("[Queen Death Display] Widget initialized")
     -- Initialize panel position (in bottom-up coordinates like LayoutPlannerPlus)
     local vsx, vsy = gl.GetViewSizes()
-    panelY = 140  -- Bottom-up: Y increases upward from bottom
+    -- Center vertically on left side (middle of screen)
+    panelY = vsy / 2  -- Bottom-up: Y increases upward from bottom, so vsy/2 is middle
     -- Initialize log file
     initLogFile()
     -- Add a test message to verify drawing works
@@ -349,7 +350,7 @@ function widget:DrawScreen()
     
     -- Update panel Y if screen size changed (bottom-up coordinates)
     if not panelY or panelY < 50 then
-        panelY = 140
+        panelY = vsy / 2  -- Center vertically on left side
     end
     
     -- Display panel (positioned by dragging) - wider to fit large text

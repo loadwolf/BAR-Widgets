@@ -35,6 +35,7 @@ local teamKills = {}
 local deathMessages = {}  -- Table of {time, text, values, dismissed, messageType}
 local MESSAGE_DURATION = 10  -- seconds (no longer used to hide, panel is always visible)
 local MAX_MESSAGES = 10
+local hasRealNotification = false  -- Track if we've had at least one real notification
 
 -- Logging
 local LOG_DIR = "LuaUI/Widgets/QueenDeathDisplay/"
@@ -267,6 +268,17 @@ local function addDeathMessage(killerName, killerCount, totalQueens, killedQueen
     --     table.insert(valuesText, string.format("Queens Remaining: %d", remaining))
     -- end
     
+    -- Remove placeholder message if this is the first real notification
+    if not hasRealNotification then
+        hasRealNotification = true
+        -- Remove any system placeholder messages
+        for i = #deathMessages, 1, -1 do
+            if deathMessages[i].messageType == "system" then
+                table.remove(deathMessages, i)
+            end
+        end
+    end
+    
     -- Add to messages list
     table.insert(deathMessages, {
         time = now,
@@ -330,9 +342,8 @@ function widget:DrawScreen()
     local vsx, vsy = gl.GetViewSizes()
     local now = GetGameSeconds()
     
-    -- Always keep panel visible.
-    -- If for some reason there are no messages, recreate a minimal status message.
-    if #deathMessages == 0 then
+    -- Only show placeholder if we haven't had any real notifications yet
+    if not hasRealNotification and #deathMessages == 0 then
         table.insert(deathMessages, {
             time = now,
             pingText = "Queen Death Display Active",
@@ -341,7 +352,9 @@ function widget:DrawScreen()
             killerCount = 0,
             totalQueens = nil,
             killedQueens = 0,
-            remaining = nil
+            remaining = nil,
+            dismissed = false,
+            messageType = "system"
         })
     end
     
@@ -663,6 +676,17 @@ local function addMetalIncomeNotification(income, threshold)
     local formattedThreshold = formatMetalIncome(threshold)
     
     local pingText = string.format("Metal Income: %s/s (Reached %s/s)", formattedIncome, formattedThreshold)
+    
+    -- Remove placeholder message if this is the first real notification
+    if not hasRealNotification then
+        hasRealNotification = true
+        -- Remove any system placeholder messages
+        for i = #deathMessages, 1, -1 do
+            if deathMessages[i].messageType == "system" then
+                table.remove(deathMessages, i)
+            end
+        end
+    end
     
     -- Build detailed values text for display (commented out - main ping text is sufficient)
     local valuesText = {}

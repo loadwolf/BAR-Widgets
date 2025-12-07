@@ -122,20 +122,23 @@
         <p><strong>File:</strong> queen_death_display.lua</p>
         <p><strong>Version:</strong> 1.0</p>
         <p><strong>Author:</strong> Auto</p>
-        <p><strong>Purpose:</strong> Displays real-time information about Raptor Queen deaths, game timers, and statistics in a persistent on-screen panel with map pings.</p>
+        <p><strong>Purpose:</strong> Displays real-time information about Raptor Queen deaths, game timers, metal income milestones, and statistics in a draggable on-screen panel with map pings and logging.</p>
     </div>
 
     <div class="section">
         <h2>Overview</h2>
-        <p>The Queen Death Display widget provides comprehensive real-time information about Raptor Queen deaths in Beyond All Reason. It displays:</p>
+        <p>The Queen Death Display widget provides comprehensive real-time information about Raptor Queen deaths and metal income milestones in Beyond All Reason. It displays:</p>
         <ul class="feature-list">
-            <li>Queen death notifications with killer information</li>
-            <li>Countdown timers for grace period and queen arrival</li>
+            <li>Queen death notifications with killer information and kill counts</li>
+            <li>Large countdown timers for grace period and queen arrival (44px, no labels)</li>
             <li>Queen statistics (total, killed, remaining)</li>
+            <li>Metal income notifications when thresholds are reached</li>
             <li>Player kill counts per team</li>
             <li>Map pings at queen death locations</li>
+            <li>Dismiss buttons for individual notifications</li>
+            <li>Comprehensive logging to file</li>
         </ul>
-        <p>The widget maintains a persistent on-screen panel on the left side of the screen that is always visible and updates in real-time.</p>
+        <p>The widget maintains a draggable on-screen panel that spawns in the middle-left of the screen and is always visible, updating in real-time.</p>
     </div>
 
     <div class="section">
@@ -147,30 +150,59 @@
             <li>Identifies the killer (team/player who delivered the killing blow)</li>
             <li>Tracks kill counts per team/player</li>
             <li>Records death location for map pinging</li>
-            <li>Maintains history of up to 5 recent deaths</li>
+            <li>Maintains history of up to 10 recent notifications</li>
         </ul>
 
         <h3>2. Timer Display</h3>
         <ul class="feature-list">
-            <li><span class="highlight">No Rush Timer:</span> Countdown to when grace period ends (green text)</li>
-            <li><span class="highlight">Queens Arrive:</span> Countdown to when queens spawn (orange text, shown after grace period)</li>
-            <li><span class="highlight">Queens Remaining:</span> Live count of remaining queens (red text, shown when queens are active)</li>
+            <li><span class="highlight">No Rush Timer:</span> Countdown to when grace period ends (green text, 44px, no label)</li>
+            <li><span class="highlight">Queens Arrive:</span> Countdown to when queens spawn (orange text, 44px, no label, shown after grace period)</li>
+            <li><span class="highlight">Queens Remaining:</span> Live count of remaining queens (red text, 44px, no label, shown when queens are active)</li>
         </ul>
 
-        <h3>3. Visual Display</h3>
+        <h3>3. Metal Income Notifications</h3>
         <ul class="feature-list">
-            <li>Persistent left-side panel (always visible)</li>
-            <li>Timer section at top with dark background</li>
-            <li>Death message history below timers</li>
-            <li>Orange border and highlight colors for visibility</li>
-            <li>Messages never fade or disappear (permanent display)</li>
+            <li>Tracks metal income per second in real-time</li>
+            <li>Configurable thresholds: 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1M, 2M, 5M, 10M, 50M, 100M+</li>
+            <li>Formats large numbers with K/M notation (e.g., "1.5K/s", "2.3M/s")</li>
+            <li>Triggers notification when each threshold is reached</li>
+            <li>Each threshold only triggers once per game</li>
         </ul>
 
-        <h3>4. Map Integration</h3>
+        <h3>4. Visual Display</h3>
+        <ul class="feature-list">
+            <li>Draggable panel (can be repositioned anywhere on screen)</li>
+            <li>Spawns in middle-left of screen (vertically centered)</li>
+            <li>Header section with "Queen Death Display" title</li>
+            <li>Timer section below header with large, clear numbers</li>
+            <li>Notification history below timers</li>
+            <li>Orange border and highlight colors for visibility</li>
+            <li>Messages never fade or disappear (permanent display until dismissed)</li>
+            <li>Dismiss button (red X) at start of each notification line</li>
+        </ul>
+
+        <h3>5. Map Integration</h3>
         <ul class="feature-list">
             <li>Creates map marker/ping at queen death location</li>
             <li>Ping text includes killer name, kill count, and remaining queens</li>
             <li>Synchronized with on-screen display</li>
+        </ul>
+
+        <h3>6. Notification Management</h3>
+        <ul class="feature-list">
+            <li>Dismiss buttons on all notifications (queen deaths and metal income)</li>
+            <li>Click red X button to dismiss individual notifications</li>
+            <li>System messages (like "Waiting for queen death...") cannot be dismissed</li>
+            <li>Dismissed messages remain in memory but are hidden from display</li>
+        </ul>
+
+        <h3>7. Logging</h3>
+        <ul class="feature-list">
+            <li>All notifications logged to file with timestamps</li>
+            <li>Log file location: <code>LuaUI/Widgets/QueenDeathDisplay/notifications_YYYYMMDD_HHMMSS.log</code></li>
+            <li>Logs include: timestamp, game time, and notification message</li>
+            <li>New log file created for each game session</li>
+            <li>Logs both queen death and metal income notifications</li>
         </ul>
     </div>
 
@@ -238,6 +270,10 @@
                 <li><code>Spring.GetPlayerInfo()</code> - Get player name</li>
                 <li><code>Spring.MarkerAddPoint()</code> - Create map ping</li>
                 <li><code>Spring.GetGameSeconds()</code> - Current game time</li>
+                <li><code>Spring.GetTeamResources()</code> - Get team metal income</li>
+                <li><code>Spring.GetMyTeamID()</code> - Get local player's team ID</li>
+                <li><code>Spring.CreateDir()</code> - Create log directory</li>
+                <li><code>Spring.Echo()</code> - Debug output to console</li>
             </ul>
         </div>
     </div>
@@ -248,24 +284,22 @@
         <h3>Timer Section (Top of Panel)</h3>
         <div class="display-format">
             <pre>
-=== TIMERS ===
-No Rush: 5m 23s          (green, shown during grace period)
-Queens Arrive: 2m 15s    (orange, shown after grace period ends)
-Queens Remaining: 18     (red, shown when queens are active)
+[Header: "Queen Death Display"]
+5m 23s          (green, 44px, no label - shown during grace period)
+2m 15s          (orange, 44px, no label - shown after grace period ends)
+18              (red, 44px, no label - shown when queens are active)
             </pre>
         </div>
 
-        <h3>Death Message Format</h3>
+        <h3>Notification Message Format</h3>
         <div class="display-format">
             <pre>
-Queen Killed by Player1 #2 (18 remaining)    (orange, bold, main line)
-  Killer: Player1                            (white, detail)
-  Player Kills: 2                            (white, detail)
-  Total Queens: 20                           (white, detail)
-  Queens Killed: 2                           (white, detail)
-  Queens Remaining: 18                        (white, detail)
+[Red X Button] Queen Killed by Player1 #2 (18 remaining)    (orange, bold, 14px)
+[Red X Button] Metal Income: 1.5K/s (Reached 1.0K/s)       (orange, bold, 14px)
             </pre>
         </div>
+        
+        <p><strong>Note:</strong> Verbose detail lines (Killer, Player Kills, etc.) are no longer displayed on screen - only the main ping text is shown. Full details are still logged to file.</p>
 
         <h3>Map Ping Format</h3>
         <div class="display-format">
@@ -293,36 +327,48 @@ raptor_queen_normal
         
         <h3>Widget Lifecycle</h3>
         <ul>
-            <li><strong>Initialize:</strong> Sets up queen unit detection, creates initial test message</li>
-            <li><strong>UnitDestroyed:</strong> Handles queen death events, tracks kills, creates pings</li>
+            <li><strong>Initialize:</strong> Sets up queen unit detection, initializes log file, creates initial test message, sets panel position to middle-left</li>
+            <li><strong>UnitDestroyed:</strong> Handles queen death events, tracks kills, creates pings, logs to file</li>
+            <li><strong>GameFrame:</strong> Checks metal income every 30 frames (~1 second) and triggers notifications</li>
             <li><strong>DrawScreen:</strong> Renders panel every frame with updated timers and messages</li>
+            <li><strong>MousePress/Move/Release:</strong> Handles panel dragging and dismiss button clicks</li>
+            <li><strong>Shutdown:</strong> Closes log file and writes end timestamp</li>
         </ul>
 
         <h3>Data Structures</h3>
         <div class="code-block">
 teamKills = {}  -- Tracks kills per team: teamKills[teamID] = count
-deathMessages = {  -- Array of death records
+deathMessages = {  -- Array of notification records (queen deaths + metal income)
     {
         time = gameSeconds,
         pingText = "Queen Killed by...",
-        valuesText = {"Killer: ...", "Player Kills: ...", ...},
+        valuesText = {},  -- Verbose details (commented out in display)
         killerName = "Player1",
         killerCount = 2,
         totalQueens = 20,
         killedQueens = 2,
-        remaining = 18
+        remaining = 18,
+        dismissed = false,
+        messageType = "queen_death"  -- or "metal_income" or "system"
     },
     ...
 }
+metalIncomeTriggered = {}  -- Tracks which thresholds have been triggered
+metalIncomeThresholds = {100, 200, 500, 1000, ...}  -- Configurable thresholds
         </div>
 
         <h3>Key Functions</h3>
         <ul>
             <li><code>getKillerName(teamID)</code> - Resolves team ID to player name</li>
             <li><code>getQueenTotals()</code> - Gets total/killed/remaining queen counts</li>
-            <code>getTimerInfo()</code> - Calculates grace period, queen ETA, remaining count</li>
+            <li><code>getTimerInfo()</code> - Calculates grace period, queen ETA, remaining count</li>
             <li><code>formatTime(seconds)</code> - Formats seconds as "Xm Ys" or "Zs"</li>
-            <li><code>addDeathMessage(...)</code> - Creates and stores death record</li>
+            <li><code>formatMetalIncome(amount)</code> - Formats metal values with K/M notation</li>
+            <li><code>addDeathMessage(...)</code> - Creates and stores queen death notification</li>
+            <li><code>addMetalIncomeNotification(income, threshold)</code> - Creates metal income notification</li>
+            <li><code>checkMetalIncome()</code> - Monitors metal income and triggers notifications</li>
+            <li><code>logNotification(messageType, pingText, valuesText)</code> - Writes notification to log file</li>
+            <li><code>initLogFile()</code> - Initializes log file with timestamp</li>
         </ul>
     </div>
 
@@ -357,10 +403,11 @@ remaining = totalQueens - killedQueens
         
         <h3>Panel Position & Size</h3>
         <ul>
-            <li><strong>Position:</strong> Left side of screen, 20px from left edge</li>
-            <li><strong>Top Position:</strong> 100px from top of screen</li>
-            <li><strong>Width:</strong> 350px</li>
-            <li><strong>Height:</strong> Dynamic (based on content)</li>
+            <li><strong>Initial Position:</strong> Left side of screen, 20px from left edge, vertically centered (middle of screen)</li>
+            <li><strong>Draggable:</strong> Panel can be dragged anywhere on screen</li>
+            <li><strong>Width:</strong> 450px (increased to fit large timer text)</li>
+            <li><strong>Height:</strong> Dynamic (based on content: header + timers + notifications)</li>
+            <li><strong>Header Height:</strong> 20px with title "Queen Death Display"</li>
         </ul>
 
         <h3>Colors</h3>
@@ -377,10 +424,10 @@ remaining = totalQueens - killedQueens
 
         <h3>Typography</h3>
         <ul>
-            <li><strong>Timer Section Header:</strong> 12px, bold</li>
-            <li><strong>Timer Values:</strong> 11px, normal</li>
-            <li><strong>Death Message Title:</strong> 14px, bold</li>
-            <li><strong>Detail Lines:</strong> 11px, normal</li>
+            <li><strong>Header Title:</strong> 12px, bold, orange</li>
+            <li><strong>Timer Values:</strong> 44px (4x normal size), no labels</li>
+            <li><strong>Notification Messages:</strong> 14px, bold, orange</li>
+            <li><strong>Dismiss Button:</strong> 16x16px red square with white X</li>
             <li><strong>Line Height:</strong> 20px</li>
             <li><strong>Padding:</strong> 10px</li>
         </ul>
@@ -406,10 +453,11 @@ remaining = totalQueens - killedQueens
 
         <h3>Message History</h3>
         <ul>
-            <li>Maximum of 5 death messages stored</li>
-            <li>Oldest message removed when limit reached</li>
-            <li>Messages never auto-delete (permanent display)</li>
+            <li>Maximum of 10 notifications stored (queen deaths + metal income)</li>
+            <li>Oldest notification removed when limit reached</li>
+            <li>Notifications never auto-delete (permanent display until dismissed)</li>
             <li>If no messages exist, shows "Queen Death Display Active" placeholder</li>
+            <li>Dismissed notifications are hidden but remain in memory</li>
         </ul>
 
         <h3>Data Availability</h3>
@@ -423,13 +471,14 @@ remaining = totalQueens - killedQueens
     <div class="section">
         <h2>Future Enhancement Possibilities</h2>
         <ul>
-            <li>Configurable panel position (draggable)</li>
-            <li>Configurable message history limit</li>
-            <li>Sound notification on queen death</li>
+            <li>Configurable metal income thresholds (currently hardcoded)</li>
+            <li>Configurable message history limit (currently 10)</li>
+            <li>Sound notification on queen death or metal income milestones</li>
             <li>Damage tracking per queen (who did most damage, not just last hit)</li>
             <li>Statistics summary (total kills per player, average time between kills)</li>
-            <li>Export death log to file</li>
+            <li>Panel position persistence across game sessions</li>
             <li>Color coding based on difficulty level</li>
+            <li>Custom notification filters (show/hide certain types)</li>
         </ul>
     </div>
 
@@ -448,9 +497,11 @@ remaining = totalQueens - killedQueens
         <ul>
             <li>DrawScreen called every frame - optimized to only draw when panel is visible</li>
             <li>Timer calculations performed every frame - minimal computational cost</li>
-            <li>Message history limited to 5 entries to prevent memory growth</li>
+            <li>Metal income checked every 30 frames (~1 second) to balance accuracy and performance</li>
+            <li>Message history limited to 10 entries to prevent memory growth</li>
             <li>No expensive operations in UnitDestroyed callback</li>
             <li>Uses local Spring API shortcuts to reduce function call overhead</li>
+            <li>Log file writes are flushed immediately to prevent data loss</li>
         </ul>
     </div>
 
@@ -460,11 +511,15 @@ remaining = totalQueens - killedQueens
             <li>Widget loads in non-Raptor game (should show placeholder, no errors)</li>
             <li>Queen dies with valid attacker team (should show killer info)</li>
             <li>Queen dies with nil attacker team (should show "Unknown" killer)</li>
-            <li>Multiple queens die in sequence (should maintain history)</li>
-            <li>Grace period countdown (should update every second)</li>
-            <li>Queen arrival ETA calculation (should show after grace period)</li>
+            <li>Multiple queens die in sequence (should maintain history up to 10)</li>
+            <li>Metal income reaches thresholds (should trigger notifications)</li>
+            <li>Dismiss button clicked (should hide notification)</li>
+            <li>Panel dragging (should move smoothly, stay on screen)</li>
+            <li>Grace period countdown (should update every second, large text)</li>
+            <li>Queen arrival ETA calculation (should show after grace period, large text)</li>
             <li>All queens defeated (should show "ALL DEFEATED!")</li>
-            <li>Widget reloaded mid-game (should maintain kill counts)</li>
+            <li>Widget reloaded mid-game (should maintain kill counts, create new log file)</li>
+            <li>Log file creation (should create directory if needed, write timestamps)</li>
         </ul>
     </div>
 

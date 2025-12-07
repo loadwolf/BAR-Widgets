@@ -36,17 +36,19 @@ local deathMessages = {}  -- Table of {time, text, values, dismissed, messageTyp
 local MESSAGE_DURATION = 10  -- seconds (no longer used to hide, panel is always visible)
 local MAX_MESSAGES = 10
 local hasRealNotification = false  -- Track if we've had at least one real notification
+local showLeaderboard = false  -- Show kill leaderboard when all queens defeated
+local leaderboardShown = false  -- Track if we've already shown the leaderboard
 
 -- Logging
 local LOG_DIR = "LuaUI/Widgets/QueenDeathDisplay/"
 local logFile = nil
 
 -- Metal income tracking
-local metalIncomeThresholds = {100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000, 2000000,5000000,10000000,50000000,100000000, }  -- Metal per second thresholds
-local metalIncomeTriggered = {}  -- Track which thresholds have been triggered
-local lastMetalCheck = 0
-local lastMetalAmount = 0
-local lastMetalCheckTime = 0
+local metalIncomeThresholds = {100, 200, 500, 1000, 2000,3000,4000, 5000,6000,7000,8000,9000, 10000,15000, 20000,30000,40000, 50000, 100000, 200000, 500000, 1000000, 2000000,5000000,10000000,50000000,100000000, }  -- Metal per second thresholds
+local metalIncomeTriggered = {}  -- Track which thresholds have been triggered (per team: metalIncomeTriggered[teamID][threshold] = true)
+local lastMetalAmount = {}  -- Track last metal amount per team: lastMetalAmount[teamID] = amount
+local lastMetalCheckTime = {}  -- Track last check time per team: lastMetalCheckTime[teamID] = time
+local trackedTeamID = nil  -- Team ID we're currently tracking
 
 -- Panel position (draggable)
 local panelX = 20
@@ -65,6 +67,13 @@ local GetUnitPosition = Spring.GetUnitPosition
 local MarkerAddPoint = Spring.MarkerAddPoint
 local GetTeamResources = Spring.GetTeamResources
 local GetMyTeamID = Spring.GetMyTeamID
+local GetSpectatingState = Spring.GetSpectatingState
+local GetTeamList = Spring.GetTeamList
+local GetGaiaTeamID = Spring.GetGaiaTeamID
+local PlaySoundFile = Spring.PlaySoundFile
+
+-- VFS for listing files
+local VFS = VFS
 
 -- Format time as "Xm Ys" or "Zs"
 local function formatTime(seconds)
@@ -80,6 +89,40 @@ local function formatTime(seconds)
     else
         return string.format("%ds", secs)
     end
+end
+
+-- Text-to-speech function (cross-platform)
+-- Note: os.execute is not available in Spring RTS widgets, so TTS is disabled
+local function speakText(text)
+    if not text or text == "" then
+        return
+    end
+    
+    -- os.execute is not available in Spring RTS widget environment
+    -- TTS functionality is disabled for security/sandboxing reasons
+    -- The notification will still appear on screen and in logs
+    
+    -- Uncomment below if you want to try (will likely fail):
+    --[[
+    if not os.execute then
+        return  -- os.execute not available
+    end
+    
+    -- Escape quotes and special characters for shell commands
+    local escapedText = string.gsub(text, '"', '\\"')
+    escapedText = string.gsub(escapedText, "'", "\\'")
+    
+    -- Try Windows PowerShell TTS first (most common)
+    local command = string.format('powershell -Command "Add-Type -AssemblyName System.Speech; $speak = New-Object System.Speech.Synthesis.SpeechSynthesizer; $speak.Speak(\'%s\')"', escapedText)
+    local success, result = pcall(os.execute, command)
+    
+    -- If PowerShell fails, try alternative methods
+    if not success or (result and result ~= 0) then
+        -- Try Windows SAPI directly
+        command = string.format('powershell -Command "$sapi = New-Object -ComObject SAPI.SpVoice; $sapi.Speak(\'%s\')"', escapedText)
+        pcall(os.execute, command)
+    end
+    --]]
 end
 
 -- Initialize log file
@@ -112,6 +155,93 @@ local function logNotification(messageType, pingText, valuesText)
     logFile:flush()  -- Ensure it's written immediately
 end
 
+-- List available sound files in common directories
+local function listAvailableSounds()
+    if not VFS or not VFS.DirList then
+        Spring.Echo("[Queen Death Display] VFS.DirList not available - cannot list sound files")
+        return {}
+    end
+    
+    local soundFiles = {}
+    local searchDirs = {
+        "sounds",
+        "Sounds",
+        "sounds/voice",
+        "Sounds/voice",
+        "sounds/commands",
+        "Sounds/commands",
+        "sounds/ui",
+        "Sounds/ui",
+    }
+    
+    local extensions = {"*.wav", "*.ogg", "*.mp3", "*.flac"}
+    
+    Spring.Echo("[Queen Death Display] === Searching for sound files ===")
+    
+    for _, dir in ipairs(searchDirs) do
+        for _, ext in ipairs(extensions) do
+            local files = VFS.DirList(dir, ext, VFS.RAW_FIRST)
+            if files and #files > 0 then
+                Spring.Echo(string.format("[Queen Death Display] Found %d files in %s/%s:", #files, dir, ext))
+                for i, file in ipairs(files) do
+                    -- Extract just the filename
+                    local filename = file:match("([^/\\]+)$") or file
+                    table.insert(soundFiles, file)  -- Full path
+                    Spring.Echo(string.format("  [%d] %s", i, filename))
+                end
+            end
+        end
+    end
+    
+    -- Also try searching for voice-related files
+    local seenFiles = {}
+    for _, file in ipairs(soundFiles) do
+        seenFiles[file] = true
+    end
+    
+    local voicePatterns = {"*voice*", "*command*", "*beep*", "*click*", "*alert*", "*notify*"}
+    for _, pattern in ipairs(voicePatterns) do
+        for _, ext in ipairs(extensions) do
+            local searchPattern = pattern .. ext:gsub("*", "")
+            local files = VFS.DirList("sounds", searchPattern, VFS.RAW_FIRST)
+            if not files or #files == 0 then
+                files = VFS.DirList("Sounds", searchPattern, VFS.RAW_FIRST)
+            end
+            if files and #files > 0 then
+                Spring.Echo(string.format("[Queen Death Display] Found %d files matching '%s':", #files, searchPattern))
+                for i, file in ipairs(files) do
+                    local filename = file:match("([^/\\]+)$") or file
+                    if not seenFiles[file] then  -- Avoid duplicates
+                        seenFiles[file] = true
+                        table.insert(soundFiles, file)
+                        Spring.Echo(string.format("  [%d] %s", #soundFiles, filename))
+                    end
+                end
+            end
+        end
+    end
+    
+    Spring.Echo(string.format("[Queen Death Display] === Total sound files found: %d ===", #soundFiles))
+    
+    -- Write to log file if available
+    if logFile then
+        logFile:write("\n=== Available Sound Files ===\n")
+        logFile:write("(VFS paths - use these with Spring.PlaySoundFile)\n\n")
+        for i, file in ipairs(soundFiles) do
+            local filename = file:match("([^/\\]+)$") or file
+            logFile:write(string.format("%d. %s\n", i, file))
+            logFile:write(string.format("   Filename: %s\n", filename))
+        end
+        logFile:write("\n=============================\n")
+        logFile:write("To use a sound file, call: Spring.PlaySoundFile(\"path\", volume)\n")
+        logFile:write("Example: Spring.PlaySoundFile(\"sounds/voice/attack.wav\", 1.0)\n")
+        logFile:write("=============================\n\n")
+        logFile:flush()
+    end
+    
+    return soundFiles
+end
+
 function widget:Initialize()
     Spring.Echo("[Queen Death Display] Widget initialized")
     -- Initialize panel position (in bottom-up coordinates like LayoutPlannerPlus)
@@ -120,12 +250,33 @@ function widget:Initialize()
     panelY = vsy / 2  -- Bottom-up: Y increases upward from bottom, so vsy/2 is middle
     -- Initialize log file
     initLogFile()
-    -- Add a test message to verify drawing works
+    
+    -- Play test sound to confirm widget is working
+    -- Try common Spring RTS sound files
+    local soundFiles = {
+        "beep4",
+        "beep",
+        "buttonclick",
+        "click1",
+    }
+    local soundPlayed = false
+    for _, soundName in ipairs(soundFiles) do
+        if PlaySoundFile(soundName, 0.5) then
+            soundPlayed = true
+            Spring.Echo("[Queen Death Display] Test sound played: " .. soundName)
+            break
+        end
+    end
+    if not soundPlayed then
+        Spring.Echo("[Queen Death Display] Could not play test sound (no sound files found)")
+    end
+    
+    -- Add a test notification to confirm widget is working
     local now = GetGameSeconds()
     table.insert(deathMessages, {
         time = now,
-        pingText = "Queen Death Display Active",
-        valuesText = {"Waiting for queen death..."},
+        pingText = "Queen Death Display - Widget Active",
+        valuesText = {"Test notification - Widget is working!"},
         killerName = nil,
         killerCount = 0,
         totalQueens = nil,
@@ -134,6 +285,15 @@ function widget:Initialize()
         dismissed = false,
         messageType = "system"
     })
+    
+    -- Log test notification
+    logNotification("system", "Widget initialized and ready", {"Test notification displayed"})
+    
+    Spring.Echo("[Queen Death Display] Test notification displayed - Widget is working!")
+    
+    -- List available sound files (run once on startup)
+    Spring.Echo("[Queen Death Display] Listing available sound files...")
+    listAvailableSounds()
 end
 
 function widget:Shutdown()
@@ -226,31 +386,58 @@ local function getTimerInfo()
     -- Remaining queens
     local _, _, remaining = getQueenTotals()
     
+    -- Check if all queens are defeated
+    if remaining and remaining == 0 and not leaderboardShown then
+        showLeaderboard = true
+        leaderboardShown = true
+    end
+    
     return graceRemaining, queenETA, remaining
+end
+
+-- Build kill leaderboard from teamKills
+local function buildKillLeaderboard()
+    local leaderboard = {}
+    
+    -- Convert teamKills to leaderboard entries
+    for teamID, kills in pairs(teamKills) do
+        if kills > 0 then
+            local playerName = getKillerName(teamID)
+            table.insert(leaderboard, {
+                teamID = teamID,
+                name = playerName or "Unknown",
+                kills = kills
+            })
+        end
+    end
+    
+    -- Sort by kills (descending)
+    table.sort(leaderboard, function(a, b)
+        return a.kills > b.kills
+    end)
+    
+    return leaderboard
 end
 
 -- Add a death message to display
 local function addDeathMessage(killerName, killerCount, totalQueens, killedQueens, remaining)
     local now = GetGameSeconds()
     
-    -- Build the ping text
-    local pingText
-    if killerName then
-        if killerCount > 0 then
-            pingText = string.format("Queen Killed by %s #%d", killerName, killerCount)
+    -- Build the ping text - Format: "Queen Killed by PlayerName #2 (18 remaining)"
+    -- Killer will always be available, so always show it
+    local pingText = string.format("Queen Killed by %s #%d", killerName or "Unknown", killerCount or 0)
+    
+    -- ALWAYS add remaining info (this is the main requirement!)
+    if remaining and remaining >= 0 then
+        if remaining > 0 then
+            pingText = pingText .. string.format(" (%d remaining)", remaining)
         else
-            pingText = string.format("Queen Killed by %s", killerName)
+            pingText = pingText .. " (ALL DEFEATED!)"
         end
-    else
-        pingText = "Queen Killed"
     end
     
-    -- Add remaining info
-    if remaining and remaining > 0 then
-        pingText = pingText .. string.format(" (%d remaining)", remaining)
-    elseif remaining == 0 then
-        pingText = pingText .. " (ALL DEFEATED!)"
-    end
+    -- Debug: verify ping text has all required info
+    Spring.Echo(string.format("[Queen Death] PING TEXT: '%s'", pingText))
     
     -- Build detailed values text for display (commented out - main ping text is sufficient)
     local valuesText = {}
@@ -309,27 +496,62 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerD
     if not unitDef then return end
 
     if raptorQueenDefIDs[unitDefID] then
+        -- Get position - should work even in spectator mode when unit is destroyed
         local x, y, z = GetUnitPosition(unitID)
-        if x and y and z then
-            -- Determine killer name and per-team kill count
-            local killerName = getKillerName(attackerTeam)
-            if killerName and attackerTeam and attackerTeam >= 0 then
-                teamKills[attackerTeam] = (teamKills[attackerTeam] or 0) + 1
-            end
-            local killerCount = (attackerTeam and teamKills[attackerTeam]) or 0
+        
+        -- Determine killer name and per-team kill count
+        -- Debug: log attacker info
+        Spring.Echo(string.format("[Queen Death] DEBUG: attackerTeam=%s, attackerID=%s, unitTeam=%s", 
+            tostring(attackerTeam), tostring(attackerID), tostring(unitTeam)))
+        
+        local killerName = getKillerName(attackerTeam)
+        if killerName and attackerTeam and attackerTeam >= 0 then
+            teamKills[attackerTeam] = (teamKills[attackerTeam] or 0) + 1
+        end
+        local killerCount = (attackerTeam and teamKills[attackerTeam]) or 0
+        
+        -- Debug: log killer info
+        Spring.Echo(string.format("[Queen Death] DEBUG: killerName=%s, killerCount=%d", 
+            tostring(killerName), killerCount))
 
-            -- Get queen totals
-            local totalQueens, killedQueens, remaining = getQueenTotals()
-            
-            -- Create ping text and add to display
-            local pingText = addDeathMessage(killerName, killerCount, totalQueens, killedQueens, remaining)
-            
-            -- Debug output
-            Spring.Echo("[Queen Death] " .. pingText)
-            Spring.Echo("[Queen Death] Messages count: " .. #deathMessages)
-            
-            -- Ping on map
-            MarkerAddPoint(x, y, z, pingText, false)
+        -- Get queen totals
+        local totalQueens, killedQueens, remaining = getQueenTotals()
+        
+        -- Create ping text and add to display
+        local pingText = addDeathMessage(killerName, killerCount, totalQueens, killedQueens, remaining)
+        
+        -- Debug output
+        Spring.Echo("[Queen Death] " .. pingText)
+        if x and y and z then
+            Spring.Echo("[Queen Death] Position: " .. tostring(x) .. ", " .. tostring(y) .. ", " .. tostring(z))
+        else
+            Spring.Echo("[Queen Death] WARNING: No position available for unit " .. tostring(unitID))
+        end
+        
+        -- Ping on map - THIS IS THE MAIN REQUIREMENT!
+        -- Second parameter: false = local only, true = visible to all players
+        -- Always use true so all players can see queen death pings
+        if x and y and z then
+            -- Verify ping text has required info before creating ping
+            if not pingText or pingText == "" then
+                Spring.Echo("[Queen Death] ERROR: pingText is empty!")
+                pingText = "Queen Killed"  -- Fallback
+            end
+            -- Ensure remaining count is in ping text (MAIN REQUIREMENT!)
+            if not string.find(pingText, "remaining") and not string.find(pingText, "DEFEATED") then
+                Spring.Echo("[Queen Death] WARNING: pingText missing remaining count! Adding it...")
+                if remaining and remaining >= 0 then
+                    if remaining > 0 then
+                        pingText = pingText .. string.format(" (%d remaining)", remaining)
+                    else
+                        pingText = pingText .. " (ALL DEFEATED!)"
+                    end
+                end
+            end
+            MarkerAddPoint(x, y, z, pingText, true)
+            Spring.Echo(string.format("[Queen Death] Map ping created: '%s' at (%s, %s)", pingText, tostring(x), tostring(z)))
+        else
+            Spring.Echo("[Queen Death] WARNING: Could not create map ping - no position")
         end
     end
 end
@@ -361,6 +583,11 @@ function widget:DrawScreen()
     -- Get timer info
     local graceRemaining, queenETA, remainingQueens = getTimerInfo()
     
+    -- Check if we should show leaderboard
+    if showLeaderboard and remainingQueens == 0 then
+        -- Leaderboard will be drawn below the main panel
+    end
+    
     -- Update panel Y if screen size changed (bottom-up coordinates)
     if not panelY or panelY < 50 then
         panelY = vsy / 2  -- Center vertically on left side
@@ -373,6 +600,7 @@ function widget:DrawScreen()
     
     -- Calculate panel height (include header + timer section)
     local headerHeight = 20
+    local timerTopPadding = 30  -- Extra space between header and timers
     local timerSectionHeight = 0
     if graceRemaining or queenETA or remainingQueens then
         timerSectionHeight = padding  -- No "=== TIMERS ===" label anymore
@@ -387,7 +615,7 @@ function widget:DrawScreen()
         end
     end
     
-    local totalHeight = headerHeight + padding * 2 + timerSectionHeight
+    local totalHeight = headerHeight + padding * 2 + timerTopPadding + timerSectionHeight
     for i = 1, #deathMessages do
         totalHeight = totalHeight + lineHeight * (1 + #deathMessages[i].valuesText) + 5
     end
@@ -410,8 +638,9 @@ function widget:DrawScreen()
     gl.Color(1, 0.7, 0.2, 1)
     gl.Text("Queen Death Display", panelX + padding, panelY - 15, 12, "")  -- Moved down 15 pixels
     
-    -- Draw timer section below header (start after header + padding)
-    local currentY = panelY - headerHeight - padding
+    -- Draw timer section below header (start after header + extra padding to move timers down)
+    local timerTopPadding = 30  -- Extra space between header and timers
+    local currentY = panelY - headerHeight - padding - timerTopPadding
     if timerSectionHeight > 0 then
         gl.Color(0.2, 0.2, 0.2, 0.8)
         gl.Rect(panelX + 2, currentY - timerSectionHeight + padding, panelX + panelW - 2, currentY)
@@ -512,6 +741,66 @@ function widget:DrawScreen()
     end
     
     gl.Color(1, 1, 1, 1)
+    
+    -- Draw leaderboard if all queens are defeated
+    if showLeaderboard then
+        local leaderboard = buildKillLeaderboard()
+        if #leaderboard > 0 then
+            -- Leaderboard panel (centered on screen)
+            local lbW = 400
+            local lbH = 100 + (#leaderboard * 25)  -- Header + entries
+            local lbX = (vsx - lbW) / 2
+            local lbY = vsy / 2 + lbH / 2  -- Center vertically (bottom-up coords)
+            
+            -- Background
+            gl.Color(0, 0, 0, 0.9)
+            gl.Rect(lbX, lbY - lbH, lbX + lbW, lbY)
+            
+            -- Border
+            gl.Color(1, 0.8, 0, 1)
+            gl.Rect(lbX, lbY - lbH, lbX + lbW, lbY - lbH + 3)
+            gl.Rect(lbX, lbY - 3, lbX + lbW, lbY)
+            gl.Rect(lbX, lbY - lbH, lbX + 3, lbY)
+            gl.Rect(lbX + lbW - 3, lbY - lbH, lbX + lbW, lbY)
+            
+            -- Header
+            gl.Color(1, 0.8, 0, 1)
+            gl.Text("Queen Kill Leaderboard", lbX + lbW / 2, lbY - 20, 16, "oc")
+            
+            -- Table header
+            gl.Color(1, 1, 1, 0.8)
+            gl.Text("Rank", lbX + 20, lbY - 45, 12, "o")
+            gl.Text("Player", lbX + 100, lbY - 45, 12, "o")
+            gl.Text("Kills", lbX + lbW - 50, lbY - 45, 12, "or")
+            
+            -- Leaderboard entries
+            local entryY = lbY - 70
+            for i, entry in ipairs(leaderboard) do
+                -- Rank
+                local rankColor = {1, 1, 1, 0.9}
+                if i == 1 then
+                    rankColor = {1, 0.8, 0, 1}  -- Gold for #1
+                elseif i == 2 then
+                    rankColor = {0.8, 0.8, 0.8, 1}  -- Silver for #2
+                elseif i == 3 then
+                    rankColor = {0.7, 0.5, 0.3, 1}  -- Bronze for #3
+                end
+                
+                gl.Color(rankColor[1], rankColor[2], rankColor[3], rankColor[4])
+                gl.Text(tostring(i) .. ".", lbX + 20, entryY, 12, "o")
+                
+                -- Player name
+                gl.Color(1, 1, 1, 0.9)
+                gl.Text(entry.name, lbX + 100, entryY, 12, "o")
+                
+                -- Kill count
+                gl.Color(1, 0.8, 0, 1)
+                gl.Text(tostring(entry.kills), lbX + lbW - 50, entryY, 12, "or")
+                
+                entryY = entryY - 25
+            end
+        end
+    end
 end
 
 function widget:MousePress(mx, my, button)
@@ -526,6 +815,7 @@ function widget:MousePress(mx, my, button)
     
     -- Calculate panel height (same as DrawScreen - include header)
     local headerHeight = 20
+    local timerTopPadding = 30  -- Extra space between header and timers
     local timerSectionHeight = 0
     if graceRemaining or queenETA or remainingQueens then
         timerSectionHeight = padding  -- No "=== TIMERS ===" label anymore
@@ -540,7 +830,7 @@ function widget:MousePress(mx, my, button)
         end
     end
     
-    local totalHeight = headerHeight + padding * 2 + timerSectionHeight
+    local totalHeight = headerHeight + padding * 2 + timerTopPadding + timerSectionHeight
     for i = 1, #deathMessages do
         totalHeight = totalHeight + lineHeight * (1 + #deathMessages[i].valuesText) + 5
     end
@@ -555,11 +845,13 @@ function widget:MousePress(mx, my, button)
        my >= panelBottom and my <= panelTop then
         
         -- Check each message's dismiss button
+        -- Use EXACT same calculation as DrawScreen
         local dismissButtonSize = 16
-        local dismissButtonX = panelX + padding  -- Same as DrawScreen
-        local currentY = panelY - headerHeight - padding
+        local dismissButtonX = panelX + padding
+        local timerTopPadding = 30  -- Extra space between header and timers
+        local currentY = panelY - headerHeight - padding - timerTopPadding
         
-        -- Skip timer section
+        -- Skip timer section (exact same as DrawScreen)
         if timerSectionHeight > 0 then
             if graceRemaining and graceRemaining > 0 then
                 currentY = currentY - 50
@@ -575,27 +867,32 @@ function widget:MousePress(mx, my, button)
         -- Check messages (newest at top, same order as DrawScreen)
         for i = #deathMessages, 1, -1 do
             local msg = deathMessages[i]
-            if not msg.dismissed and msg.messageType ~= "system" then
+            if not msg.dismissed then
                 local msgStartY = currentY
-                local textHeight = 14
-                local buttonY = msgStartY - dismissButtonSize + (dismissButtonSize - textHeight) / 2 + 10  -- Same calculation as DrawScreen
                 
-                -- Check if click is on this button
-                if mx >= dismissButtonX and mx <= dismissButtonX + dismissButtonSize and
-                   my >= buttonY and my <= buttonY + dismissButtonSize then
-                    -- Dismiss this message
-                    msg.dismissed = true
-                    return true  -- Consume the click
+                -- Only check dismiss button for non-system messages
+                if msg.messageType ~= "system" then
+                    -- EXACT same calculation as DrawScreen line 474
+                    local textHeight = 14
+                    local buttonY = msgStartY - dismissButtonSize + (dismissButtonSize - textHeight) / 2 + 10
+                    
+                    -- Check if click is on this button (with small tolerance for easier clicking)
+                    if mx >= dismissButtonX - 2 and mx <= dismissButtonX + dismissButtonSize + 2 and
+                       my >= buttonY - 2 and my <= buttonY + dismissButtonSize + 2 then
+                        -- Dismiss this message
+                        msg.dismissed = true
+                        return true  -- Consume the click - don't allow dragging
+                    end
                 end
                 
-                -- Move to next message position
+                -- Move to next message position (exact same as DrawScreen)
                 currentY = currentY - lineHeight - 2  -- Main text
                 for _ = 1, #msg.valuesText do
                     currentY = currentY - lineHeight  -- Value lines
                 end
                 currentY = currentY - 5  -- Spacing
             else
-                -- System message or already dismissed - still need to account for its space
+                -- Already dismissed - still need to account for its space
                 currentY = currentY - lineHeight - 2
                 for _ = 1, #msg.valuesText do
                     currentY = currentY - lineHeight
@@ -605,10 +902,20 @@ function widget:MousePress(mx, my, button)
         end
         
         -- If we get here, click was in panel but not on a button - allow dragging
-        panelDragging = true
-        panelDragDX = mx - panelX
-        panelDragDY = my - panelY  -- Both in bottom-up coordinates
-        return true
+        -- But only if not clicking on header area (header should be draggable)
+        if my < panelY - headerHeight then
+            -- Click is below header, allow dragging
+            panelDragging = true
+            panelDragDX = mx - panelX
+            panelDragDY = my - panelY  -- Both in bottom-up coordinates
+            return true
+        else
+            -- Click is in header area, always allow dragging
+            panelDragging = true
+            panelDragDX = mx - panelX
+            panelDragDY = my - panelY
+            return true
+        end
     end
     
     return false
@@ -631,6 +938,7 @@ function widget:MouseMove(mx, my, dx, dy, button)
     local now = GetGameSeconds()
     local graceRemaining, queenETA, remainingQueens = getTimerInfo()
     
+    local timerTopPadding = 30  -- Extra space between header and timers
     local timerSectionHeight = 0
     if graceRemaining or queenETA or remainingQueens then
         timerSectionHeight = padding  -- No "=== TIMERS ===" label anymore
@@ -644,7 +952,7 @@ function widget:MouseMove(mx, my, dx, dy, button)
             timerSectionHeight = timerSectionHeight + 50
         end
     end
-    local totalHeight = headerHeight + padding * 2 + timerSectionHeight
+    local totalHeight = headerHeight + padding * 2 + timerTopPadding + timerSectionHeight
     for i = 1, #deathMessages do
         totalHeight = totalHeight + lineHeight * (1 + #deathMessages[i].valuesText) + 5
     end
@@ -715,49 +1023,87 @@ local function addMetalIncomeNotification(income, threshold)
     
     -- Log to file
     logNotification("metal_income", pingText, valuesText)
+    
+    -- Text-to-speech notification
+    local ttsText = string.format("Metal income reached %s per second", formattedThreshold)
+    speakText(ttsText)
+end
+
+-- Get the team ID to track (handles spectator mode)
+local function getTrackedTeamID()
+    local myTeamID = GetMyTeamID()
+    if not myTeamID or myTeamID < 0 then
+        return nil
+    end
+    
+    -- Check if we're spectating
+    local isSpectating = GetSpectatingState()
+    if isSpectating then
+        -- In spectator mode, find the first player team (excluding raptors/gaia)
+        local allTeams = GetTeamList()
+        local gaiaTeamID = GetGaiaTeamID()
+        
+        for i = 1, #allTeams do
+            local teamID = allTeams[i]
+            -- Skip spectator team, gaia, and raptors
+            if teamID ~= myTeamID and teamID ~= gaiaTeamID then
+                -- Check if this team has players (not just AI)
+                local players = GetPlayerList(teamID)
+                if players and #players > 0 then
+                    return teamID
+                end
+            end
+        end
+        -- Fallback: return nil if no player team found
+        return nil
+    else
+        -- Not spectating, use our own team
+        return myTeamID
+    end
 end
 
 -- Check metal income and trigger notifications
 local function checkMetalIncome()
-    local myTeamID = GetMyTeamID()
-    if not myTeamID or myTeamID < 0 then
+    local teamID = getTrackedTeamID()
+    if not teamID or teamID < 0 then
         return
     end
     
-    local now = GetGameSeconds()
-    local metal, _ = GetTeamResources(myTeamID, "metal")
+    -- Update tracked team if it changed (e.g., switched spectating target)
+    if trackedTeamID ~= teamID then
+        trackedTeamID = teamID
+        -- Reset tracking for new team
+        lastMetalAmount[teamID] = nil
+        lastMetalCheckTime[teamID] = nil
+        -- Reset triggered thresholds for new team
+        metalIncomeTriggered[teamID] = {}
+    end
     
-    if not metal then
+    -- GetTeamResources returns: current, storage, pull, income, expense, share, sent, received
+    -- We want the 4th return value: income (metal per second)
+    local metal, storage, pull, income = GetTeamResources(teamID, "metal")
+    
+    if not income or income < 0 then
         return
     end
     
-    -- Initialize tracking
-    if lastMetalCheckTime == 0 then
-        lastMetalAmount = metal
-        lastMetalCheckTime = now
-        return
+    -- Use the income value directly from GetTeamResources (this is the actual income per second)
+    local incomeRate = income
+    
+    -- Initialize tracking for this team (no longer need to track metal amounts or time)
+    if not metalIncomeTriggered[teamID] then
+        metalIncomeTriggered[teamID] = {}
     end
     
-    -- Calculate income rate (check every 2 seconds for accuracy)
-    local timeDiff = now - lastMetalCheckTime
-    if timeDiff < 2.0 then
-        return
-    end
-    
-    local metalDiff = metal - lastMetalAmount
-    local incomeRate = metalDiff / timeDiff
-    
-    -- Update tracking
-    lastMetalAmount = metal
-    lastMetalCheckTime = now
-    
-    -- Check thresholds
+    -- Check thresholds (per team)
+    local triggered = metalIncomeTriggered[teamID] or {}
     for _, threshold in ipairs(metalIncomeThresholds) do
-        if incomeRate >= threshold and not metalIncomeTriggered[threshold] then
-            metalIncomeTriggered[threshold] = true
+        if incomeRate >= threshold and not triggered[threshold] then
+            triggered[threshold] = true
             addMetalIncomeNotification(incomeRate, threshold)
         end
     end
+    metalIncomeTriggered[teamID] = triggered
 end
 
 function widget:GameFrame(frame)

@@ -1,0 +1,97 @@
+Available Sound Files Reference
+Beyond All Reason - Spring RTS
+========================================
+
+VFS paths - use these with Spring.PlaySoundFile("path", volume)
+
+GENERAL SOUNDS
+--------------
+sounds/alarm.wav
+sounds/alarm_light5_mixdown.wav
+sounds/bar_joined_queue6d_mixdown.wav
+sounds/beep3.wav
+sounds/beep4.wav
+sounds/beep6.wav
+sounds/button9.wav
+sounds/marker_place.wav
+sounds/matchfound.wav
+sounds/ring.wav
+
+(Also available with capital S: Sounds/...)
+
+COMMAND SOUNDS (sounds/commands/)
+---------------------------------
+sounds/commands/blanksound.wav
+sounds/commands/cmd-attack.wav
+sounds/commands/cmd-build.wav
+sounds/commands/cmd-default-select.wav
+sounds/commands/cmd-default.wav
+sounds/commands/cmd-defaultbaselayer.wav
+sounds/commands/cmd-defaultweapon.wav
+sounds/commands/cmd-dgun.wav
+sounds/commands/cmd-fight.wav
+sounds/commands/cmd-fightxs.wav
+sounds/commands/cmd-guard.wav
+sounds/commands/cmd-guardxs.wav
+sounds/commands/cmd-move-short.wav
+sounds/commands/cmd-move-shorter.wav
+sounds/commands/cmd-move-supershort.wav
+sounds/commands/cmd-move-swoosh.wav
+sounds/commands/cmd-move.wav
+sounds/commands/cmd-none.wav
+sounds/commands/cmd-off.wav
+sounds/commands/cmd-on.wav
+sounds/commands/cmd-onoff.wav
+sounds/commands/cmd-patrol.wav
+sounds/commands/cmd-reclaim.wav
+sounds/commands/cmd-repair.wav
+sounds/commands/cmd-repairxs.wav
+sounds/commands/cmd-repeat.wav
+sounds/commands/cmd-rez.wav
+sounds/commands/cmd-rez2.wav
+sounds/commands/cmd-rez3.wav
+sounds/commands/cmd-selfd.wav
+sounds/commands/cmd-settarget.wav
+sounds/commands/cmd-stop.wav
+sounds/commands/cmd-wait.wav
+
+(Also available with capital S: Sounds/commands/...)
+
+UI SOUNDS (sounds/ui/)
+----------------------
+sounds/ui/beep4.wav
+sounds/ui/beep6.wav
+sounds/ui/blank.wav
+sounds/ui/button9.wav
+sounds/ui/chat.wav
+sounds/ui/commanderspawn-mono.wav
+sounds/ui/commanderspawn.wav
+sounds/ui/mappoint.wav
+sounds/ui/mappoint2.wav
+sounds/ui/multiselect.wav
+sounds/ui/old_multiselect.wav
+sounds/ui/teleport-charge-loop.wav
+sounds/ui/teleport-short-mono.wav
+sounds/ui/teleport-winddown.wav
+sounds/ui/teleport-windup.wav
+sounds/ui/warning1.wav
+sounds/ui/warning2.wav
+
+(Also available with capital S: Sounds/ui/...)
+
+USAGE
+-----
+To use a sound file, call: Spring.PlaySoundFile("path", volume)
+Example: Spring.PlaySoundFile("sounds/alarm.wav", 0.7)
+
+RECOMMENDED SOUNDS FOR QUEEN DEATH DISPLAY
+-------------------------------------------
+- sounds/alarm.wav (alarm sound)
+- sounds/ui/warning1.wav (warning sound)
+- sounds/ui/warning2.wav (alternative warning)
+- sounds/beep6.wav (beep notification)
+- sounds/ui/mappoint.wav (map marker sound)
+
+Note: Some paths may work with capital "S" (Sounds/...) if lowercase doesn't work.
+The widget will try both automatically.
+

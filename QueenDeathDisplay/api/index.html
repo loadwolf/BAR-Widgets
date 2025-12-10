@@ -394,6 +394,10 @@
         let countdownTimer = null;
         let lastResourcesUpdate = 0;
         const RESOURCES_UPDATE_INTERVAL = 2500; // 2.5 seconds
+        // Text-to-speech state
+        let lastSpokenGraceMinutes = null;
+        let lastSpokenEtaMinutes = null;
+        let ttsAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window;
         
         function formatTime(seconds) {
             if (seconds === null || seconds === undefined || isNaN(seconds)) {
@@ -450,6 +454,8 @@
             } else {
                 etaSection.style.display = 'block';
             }
+
+            maybeSpeakTimers(graceRemaining, queenETA);
         }
         
         function updateTimerDisplay(graceRemaining, queenETA) {
@@ -635,6 +641,41 @@
             const timestamp = data.serverTimestamp || data.timestamp;
             const timestampEl = document.getElementById('timestamp');
             timestampEl.textContent = `Last update: ${formatTimestamp(timestamp)}`;
+        }
+
+        function speak(text) {
+            if (!ttsAvailable) return;
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 1.0;
+            window.speechSynthesis.speak(utterance);
+        }
+
+        function maybeSpeakTimers(graceRemaining, queenETA) {
+            if (!ttsAvailable) return;
+
+            // Speak no-rush every whole minute change
+            if (graceRemaining !== null && graceRemaining !== undefined && !isNaN(graceRemaining) && graceRemaining > 0) {
+                const minutes = Math.floor(graceRemaining / 60);
+                if (lastSpokenGraceMinutes === null || minutes !== lastSpokenGraceMinutes) {
+                    lastSpokenGraceMinutes = minutes;
+                    speak(`No rush: ${minutes} minute${minutes === 1 ? '' : 's'} remaining`);
+                }
+            } else if (graceRemaining !== null && graceRemaining !== undefined && graceRemaining <= 0 && lastSpokenGraceMinutes !== -1) {
+                lastSpokenGraceMinutes = -1;
+                speak('No rush has ended');
+            }
+
+            // Speak queen ETA every whole minute change
+            if (queenETA !== null && queenETA !== undefined && !isNaN(queenETA) && queenETA > 0) {
+                const minutes = Math.floor(queenETA / 60);
+                if (lastSpokenEtaMinutes === null || minutes !== lastSpokenEtaMinutes) {
+                    lastSpokenEtaMinutes = minutes;
+                    speak(`Queen arrival in ${minutes} minute${minutes === 1 ? '' : 's'}`);
+                }
+            } else if (queenETA !== null && queenETA !== undefined && queenETA <= 0 && lastSpokenEtaMinutes !== -1) {
+                lastSpokenEtaMinutes = -1;
+                speak('Queens arriving now');
+            }
         }
         
         async function fetchData() {

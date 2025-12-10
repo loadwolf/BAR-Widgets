@@ -24,56 +24,8 @@ local frameCount = 0
 local exportCount = 0  -- Track export count for debugging
 local unitsScanned = false  -- Track if initial unit scan has been done
 
--- UI Button for opening web interface
-local buttonVisible = true
-local buttonX = 10
-local buttonY = 0  -- Will be calculated to center vertically
-local buttonWidth = 200
-local buttonHeight = 30
-local buttonHovered = false
-
 -- Forward declare functions (defined later)
 local exportData
-
--- Function to open web interface (with server start attempt)
-local function openWebInterface(webUrl)
-    if not webUrl then
-        webUrl = Config and Config.WEB_URL or "http://localhost:8082"
-    end
-    
-    -- Try to start the server if it's not running
-    local serverScript = "LuaUI/Widgets/QueenDeathDisplay/api/start_server.bat"
-    if VFS and VFS.FileExists and VFS.FileExists(serverScript) then
-        -- Try to execute the batch file (may not work in all Spring versions)
-        local success = pcall(function()
-            -- Note: os.execute might not be available or might be restricted
-            -- This is a best-effort attempt
-            if os and os.execute then
-                -- Get full path to batch file
-                local fullPath = Spring.GetConfigString("LuaUI", "") .. serverScript
-                -- Try to start server in background (Windows)
-                os.execute('start "" "' .. fullPath .. '"')
-            end
-        end)
-        
-        if success then
-            Spring.Echo("[Queen Death Display API] Attempting to start web server...")
-            Spring.Echo("[Queen Death Display API] Please wait a few seconds, then try again.")
-        end
-    end
-    
-    -- Open the URL
-    if Spring.OpenUrl then
-        Spring.OpenUrl(webUrl)
-        Spring.Echo(string.format("[Queen Death Display API] Opening web interface: %s", webUrl))
-        Spring.Echo("[Queen Death Display API] If connection fails, start the server manually:")
-        Spring.Echo("[Queen Death Display API]   Run: start_server.bat in QueenDeathDisplay/api/")
-    else
-        Spring.Echo(string.format("[Queen Death Display API] OpenUrl not available. Please open manually: %s", webUrl))
-        Spring.Echo("[Queen Death Display API] Also make sure the web server is running:")
-        Spring.Echo("[Queen Death Display API]   Run: start_server.bat in QueenDeathDisplay/api/")
-    end
-end
 
 function widget:Initialize()
     -- Get Spring functions (now guaranteed to be available)
@@ -128,12 +80,6 @@ function widget:Initialize()
     MetalTracker = loadModule("MetalTracker", basePath .. 'metal_tracker.lua')
     AggressionTracker = loadModule("AggressionTracker", basePath .. 'aggression_tracker.lua')
     
-    -- Debug: Check if VFS can see the files
-    if VFS and VFS.FileExists then
-        Spring.Echo("[Queen Death Display API] DEBUG: Checking if module files exist...")
-        Spring.Echo(string.format("  Config exists: %s", tostring(VFS.FileExists(basePath .. 'config.lua'))))
-        Spring.Echo(string.format("  Logger exists: %s", tostring(VFS.FileExists(basePath .. 'logger.lua'))))
-    end
     modulesLoaded = Config and Logger and JSONExport and DataManager and Utils and TimerManager and QueenTracker and MetalTracker and AggressionTracker
     
     -- Try to load HarmonyRaptor
@@ -286,90 +232,6 @@ function widget:Initialize()
         Spring.Echo("[Queen Death Display API] Widget ready - waiting for game to start")
     end
     
-    -- Register commands (widgetHandler should be available as a global)
-    local webUrl = Config and Config.WEB_URL or "http://localhost:8082"
-    
-    -- Try to register commands
-    local commandsRegistered = false
-    if widgetHandler and widgetHandler.actionHandler then
-        -- Register command to open web interface
-        widgetHandler.actionHandler:AddAction(self, "queendeath_open", function()
-            openWebInterface(webUrl)
-        end, nil, "p")
-        Spring.Echo(string.format("[Queen Death Display API] Registered '/queendeath_open' command"))
-        
-        -- Register command to check aggression
-        if AggressionTracker and DataManager then
-            widgetHandler.actionHandler:AddAction(self, "queendeath_aggression", function()
-                -- Use Spring.SendCommands to ensure output appears in console
-                Spring.SendCommands("echo ========================================")
-                Spring.SendCommands("echo COMMAND EXECUTED: /queendeath_aggression")
-                Spring.SendCommands("echo ========================================")
-                
-                if not AggressionTracker or not DataManager then
-                    Spring.SendCommands("echo ERROR: Modules not available")
-                    return
-                end
-                
-                Spring.SendCommands("echo === Player Aggression (Eco Attraction) ===")
-                
-                local aggression = AggressionTracker.getAggressionData()
-                Spring.SendCommands(string.format("echo Player teams in list: %d", #DataManager.getPlayerTeams()))
-                Spring.SendCommands(string.format("echo HarmonyRaptor available: %s", tostring(harmonyRaptorAvailable)))
-                Spring.SendCommands(string.format("echo Units scanned: %s", tostring(unitsScanned)))
-                
-                local playerEcoAttractionsRaw = DataManager.getPlayerEcoAttractionsRaw()
-                local totalEcoValue = 0
-                Spring.SendCommands("echo --- All teams with eco values ---")
-                for teamID, ecoValue in pairs(playerEcoAttractionsRaw) do
-                    if ecoValue and ecoValue > 0 then
-                        totalEcoValue = totalEcoValue + ecoValue
-                        local playerName = Utils and Utils.getPlayerName(teamID) or "Unknown"
-                        Spring.SendCommands(string.format("echo Team %d (%s): ecoValue=%.0f", teamID, playerName, ecoValue))
-                    end
-                end
-                Spring.SendCommands(string.format("echo Total eco value: %.0f", totalEcoValue))
-                
-                if #aggression == 0 then
-                    Spring.SendCommands("echo No players found or all values are 0")
-                    Spring.SendCommands("echo --- Teams in playerTeams list ---")
-                    for _, teamID in ipairs(DataManager.getPlayerTeams()) do
-                        local ecoValue = playerEcoAttractionsRaw[teamID] or 0
-                        local playerName = Utils and Utils.getPlayerName(teamID) or "Unknown"
-                        Spring.SendCommands(string.format("echo Team %d (%s): ecoValue=%.0f", teamID, playerName, ecoValue))
-                    end
-                else
-                    Spring.SendCommands(string.format("echo Found %d players with eco > 0:", #aggression))
-                    for i, entry in ipairs(aggression) do
-                        Spring.SendCommands(string.format("echo #%d: %s (Team %d) - Eco: %.0f, Percentage: %.1f%%, Multiplier: %.2fx [%s]", 
-                            i, entry.name, entry.teamID, entry.ecoValue, entry.percentage, entry.multiplier, entry.threatLevel))
-                    end
-                end
-            end, nil, "p")
-            Spring.Echo("[Queen Death Display API] Registered '/queendeath_aggression' command")
-            commandsRegistered = true
-        else
-            Spring.Echo("[Queen Death Display API] WARNING: Cannot register /queendeath_aggression - modules not loaded")
-            if not AggressionTracker then
-                Spring.Echo("  - AggressionTracker is nil")
-            end
-            if not DataManager then
-                Spring.Echo("  - DataManager is nil")
-            end
-        end
-    else
-        Spring.Echo("[Queen Death Display API] ERROR: widgetHandler not available - commands cannot be registered")
-        if not widgetHandler then
-            Spring.Echo("  - widgetHandler global is nil")
-        elseif not widgetHandler.actionHandler then
-            Spring.Echo("  - widgetHandler.actionHandler is nil")
-        end
-    end
-    
-    if commandsRegistered then
-        Spring.Echo(string.format("[Queen Death Display API] Use '/queendeath_open' to open web interface: %s", webUrl))
-        Spring.Echo("[Queen Death Display API] Use '/queendeath_aggression' to check player aggression")
-    end
 end
 
 function widget:UnitCreated(unitID, unitDefID, unitTeamID)
@@ -414,10 +276,8 @@ function widget:GameFrame(frame)
     if not modulesLoaded or not Config then return end
     -- Scan existing units once after initialization (or immediately if enabled mid-game)
     if (frame == Config.UNIT_SCAN_DELAY or (frame > Config.UNIT_SCAN_DELAY and not unitsScanned)) and AggressionTracker then
-        Spring.Echo("[Queen Death Display API] Frame " .. frame .. ": Starting unit scan...")
         AggressionTracker.scanExistingUnits()
         unitsScanned = true
-        Spring.Echo("[Queen Death Display API] Frame " .. frame .. ": Unit scan complete")
     end
     
     -- Update every N frames as backup
@@ -447,92 +307,12 @@ function widget:GameFrame(frame)
     end
 end
 
-function widget:DrawScreen()
-    if not buttonVisible or not modulesLoaded or not Config then return end
-    
-    local vsx, vsy = Spring.GetViewGeometry()
-    if not vsx or not vsy then return end
-    
-    -- Enable blending and disable depth test for screen drawing
-    gl.Blending(true)
-    gl.DepthTest(false)
-    
-    -- Position button in middle-left of screen
-    local x = buttonX
-    local y = (vsy - buttonHeight) / 2  -- Center vertically
-    
-    -- Draw button background
-    if buttonHovered then
-        gl.Color(0.2, 0.6, 0.9, 0.8)  -- Light blue when hovered
-    else
-        gl.Color(0.1, 0.3, 0.5, 0.7)  -- Dark blue normally
-    end
-    gl.Rect(x, y, x + buttonWidth, y + buttonHeight)
-    
-    -- Draw button border (simpler approach)
-    gl.Color(0.3, 0.7, 1.0, 1.0)  -- Bright blue border
-    gl.LineWidth(2.0)
-    gl.BeginEnd(GL.LINE_LOOP, function()
-        gl.Vertex(x, y, 0)
-        gl.Vertex(x + buttonWidth, y, 0)
-        gl.Vertex(x + buttonWidth, y + buttonHeight, 0)
-        gl.Vertex(x, y + buttonHeight, 0)
-    end)
-    gl.LineWidth(1.0)
-    
-    -- Draw button text
-    gl.Color(1.0, 1.0, 1.0, 1.0)  -- White text
-    local text = "Open Web Interface"
-    local fontSize = 14
-    local textWidth = gl.GetTextWidth(text) * fontSize
-    local textX = x + (buttonWidth - textWidth) / 2
-    local textY = y + (buttonHeight - fontSize) / 2 + 2
-    gl.Text(text, textX, textY, fontSize, "o")
-    
-    -- Reset color
-    gl.Color(1.0, 1.0, 1.0, 1.0)
-end
-
-function widget:MousePress(mx, my, button)
-    if not buttonVisible or not modulesLoaded or button ~= 1 then return false end
-    
-    local vsx, vsy = Spring.GetViewGeometry()
-    if not vsx or not vsy then return false end
-    
-    local x = buttonX
-    local y = (vsy - buttonHeight) / 2  -- Center vertically
-    
-    -- Check if click is within button bounds
-    if mx >= x and mx <= x + buttonWidth and my >= y and my <= y + buttonHeight then
-        local webUrl = Config and Config.WEB_URL or "http://localhost:8082"
-        openWebInterface(webUrl)
-        return true
-    end
-    
-    return false
-end
-
-function widget:MouseMove(mx, my, dx, dy, button)
-    if not buttonVisible or not modulesLoaded then return false end
-    
-    local vsx, vsy = Spring.GetViewGeometry()
-    if not vsx or not vsy then return false end
-    
-    local x = buttonX
-    local y = (vsy - buttonHeight) / 2  -- Center vertically
-    
-    -- Check if mouse is over button
-    buttonHovered = (mx >= x and mx <= x + buttonWidth and my >= y and my <= y + buttonHeight)
-    
-    return false
-end
+-- UI button removed (was used to open the web interface)
+function widget:DrawScreen() end
+function widget:MousePress() return false end
+function widget:MouseMove() return false end
 
 function widget:Shutdown()
-    -- Remove registered commands
-    if widgetHandler and widgetHandler.actionHandler then
-        widgetHandler.actionHandler:RemoveAction(self, "queendeath_open", "p")
-        widgetHandler.actionHandler:RemoveAction(self, "queendeath_aggression", "p")
-    end
     
     if Logger then
         Logger.shutdown()
@@ -553,14 +333,6 @@ end
 -- Export data to JSON file
 function exportData()
     if not modulesLoaded or not Config or not JSONExport or not DataManager or not TimerManager or not QueenTracker or not AggressionTracker then
-        -- Debug: Log why export is skipped
-        if not modulesLoaded then
-            Spring.Echo("[Queen Death Display API] DEBUG: exportData skipped - modules not loaded")
-        elseif not Config then
-            Spring.Echo("[Queen Death Display API] DEBUG: exportData skipped - Config not loaded")
-        elseif not JSONExport then
-            Spring.Echo("[Queen Death Display API] DEBUG: exportData skipped - JSONExport not loaded")
-        end
         return
     end
     

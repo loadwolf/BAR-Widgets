@@ -20,13 +20,15 @@ function QueenTracker.onUnitDestroyed(unitID, unitDefID, unitTeam, attackerID, a
     -- Get position
     local x, y, z = Spring.GetUnitPosition(unitID)
     
+    -- Resolve killer team with fallbacks
+    local killerTeam = attackerTeam
+    if (not killerTeam or killerTeam < 0) and attackerID and attackerID > 0 then
+        killerTeam = Spring.GetUnitTeam(attackerID)
+    end
+    
     -- Record kill first
-    if attackerTeam and attackerTeam >= 0 then
-        DataManager.addKill(attackerTeam)
-        Spring.Echo(string.format("[Queen Death] Recorded kill for teamID=%d, total kills=%d", 
-            attackerTeam, DataManager.getKillCount(attackerTeam)))
-    else
-        Spring.Echo(string.format("[Queen Death] WARNING: Invalid attackerTeam=%s", tostring(attackerTeam)))
+    if killerTeam and killerTeam >= 0 then
+        DataManager.addKill(killerTeam)
     end
     
     -- Try multiple methods to get killer name
@@ -35,35 +37,24 @@ function QueenTracker.onUnitDestroyed(unitID, unitDefID, unitTeam, attackerID, a
     -- Method 1: Try to get name from attacker unit ID if available
     if attackerID and attackerID > 0 then
         killerName = Utils.getPlayerNameFromUnit(attackerID)
-        if killerName then
-            Spring.Echo(string.format("[Queen Death] Got killer name from attacker unit: %s", killerName))
-        end
     end
     
     -- Method 2: Try to get name from team ID
-    if not killerName and attackerTeam and attackerTeam >= 0 then
-        killerName = Utils.getPlayerName(attackerTeam)
-        if killerName then
-            Spring.Echo(string.format("[Queen Death] Got killer name from team: %s", killerName))
-        end
+    if not killerName and killerTeam and killerTeam >= 0 then
+        killerName = Utils.getPlayerName(killerTeam)
     end
     
     -- Method 3: Fallback to "Team X" if we have a team ID but no name
-    if not killerName and attackerTeam and attackerTeam >= 0 then
-        killerName = "Team " .. tostring(attackerTeam)
-        Spring.Echo(string.format("[Queen Death] Using fallback name: %s", killerName))
+    if not killerName and killerTeam and killerTeam >= 0 then
+        killerName = "Team " .. tostring(killerTeam)
     end
     
     -- Final fallback
     if not killerName then
         killerName = "Unknown"
-        Spring.Echo("[Queen Death] WARNING: Could not determine killer name, using 'Unknown'")
     end
     
-    local killerCount = DataManager.getKillCount(attackerTeam) or 0
-    
-    Spring.Echo(string.format("[Queen Death] Killer: %s (teamID=%s, count=%d)", 
-        killerName, tostring(attackerTeam), killerCount))
+    local killerCount = DataManager.getKillCount(killerTeam) or 0
     
     -- Get queen totals
     local totalQueens, killedQueens, remaining = TimerManager.getQueenTotals()
@@ -105,13 +96,9 @@ function QueenTracker.onUnitDestroyed(unitID, unitDefID, unitTeam, attackerID, a
         messageType = "queen_death"
     })
     
-    -- Log to file
-    Logger.log("queen_death", pingText, {}, now, Utils.formatTime)
+    -- REMOVED: Logger.log call (logging disabled)
     
-    Spring.Echo("[Queen Death Display API] " .. pingText)
-    
-    -- Generate CSV leaderboard after each queen kill
-    QueenTracker.generateCSV()
+    -- REMOVED: Automatic CSV generation (now manual via web interface button)
     
     -- Ping on map
     if x and y and z then
@@ -129,17 +116,7 @@ function QueenTracker.onUnitDestroyed(unitID, unitDefID, unitTeam, attackerID, a
         Spring.MarkerAddPoint(x, y, z, pingText, true)
         
         -- Play sound for queen death
-        local deathSounds = {
-            "sounds/alarm.wav",
-            "sounds/ui/warning1.wav",
-            "sounds/ui/warning2.wav",
-            "sounds/beep6.wav",
-        }
-        for _, soundName in ipairs(deathSounds) do
-            if Spring.PlaySoundFile(soundName, 0.7) then
-                break
-            end
-        end
+        Spring.PlaySoundFile("sounds/ui/teleport-charge-loop.wav", 0.7)
     end
 end
 
@@ -147,11 +124,8 @@ function QueenTracker.buildLeaderboard()
     local leaderboard = {}
     local teamKills = DataManager.getTeamKills()
     
-    -- Quick check: if table is empty, return empty leaderboard (no debug spam)
-    local hasKills = false
     for teamID, kills in pairs(teamKills) do
         if kills and kills > 0 then
-            hasKills = true
             local playerName = Utils.getPlayerName(teamID)
             table.insert(leaderboard, {
                 teamID = teamID,
@@ -161,21 +135,10 @@ function QueenTracker.buildLeaderboard()
         end
     end
     
-    -- Only log debug messages if there are actual kills (reduces spam before queens arrive)
-    if hasKills then
-        -- Debug: Print all entries being added
-        for _, entry in ipairs(leaderboard) do
-            Spring.Echo(string.format("[Leaderboard Debug] Adding teamID=%d, kills=%d, name=%s", 
-                entry.teamID, entry.kills, entry.name))
-        end
-        
-        -- Sort by kills (descending)
-        table.sort(leaderboard, function(a, b)
-            return a.kills > b.kills
-        end)
-        
-        Spring.Echo(string.format("[Leaderboard Debug] Final leaderboard size: %d", #leaderboard))
-    end
+    -- Sort by kills (descending)
+    table.sort(leaderboard, function(a, b)
+        return a.kills > b.kills
+    end)
     
     return leaderboard
 end
@@ -188,8 +151,10 @@ function QueenTracker.generateCSV()
         return
     end
     
-    -- Create date-based subfolder if it doesn't exist
-    local dateFolder = Logger.getDateFolder()
+    -- Create date-based subfolder if it doesn't exist (replacing Logger.getDateFolder)
+    -- Note: This function is no longer called automatically, only via web interface
+    local dateStr = os.date("%Y-%m-%d")
+    local dateFolder = "LuaUI/Widgets/QueenDeathDisplay/" .. dateStr .. "/"
     Spring.CreateDir(dateFolder)
     
     local timestamp = os.date("%Y%m%d_%H%M%S")

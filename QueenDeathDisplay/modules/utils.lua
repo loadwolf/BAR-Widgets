@@ -70,7 +70,7 @@ function Utils.getPlayerName(teamID)
     
     -- Method 4: Try GetTeamInfo for team name
     local success2, teamInfo = pcall(Spring.GetTeamInfo, teamID)
-    if success2 and teamInfo then
+    if success2 and type(teamInfo) == "table" then
         local teamName = teamInfo.name
         if teamName and teamName ~= "" then
             return teamName

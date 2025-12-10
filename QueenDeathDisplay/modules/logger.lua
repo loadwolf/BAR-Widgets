@@ -26,17 +26,7 @@ function Logger.init(baseDir)
         Spring.Echo("[Queen Death Display API] WARNING: Could not open queen death log file: " .. queenDeathFilename)
     end
     
-    -- Metal income log file
-    local metalIncomeFilename = dateFolder .. "metal_income_" .. timestamp .. ".log"
-    logFiles.metalIncome = io.open(metalIncomeFilename, "w")
-    if logFiles.metalIncome then
-        logFiles.metalIncome:write("Queen Death Display - Metal Income Log\n")
-        logFiles.metalIncome:write("Started: " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n")
-        logFiles.metalIncome:write("========================================\n")
-        Spring.Echo("[Queen Death Display API] Metal income logging to: " .. metalIncomeFilename)
-    else
-        Spring.Echo("[Queen Death Display API] WARNING: Could not open metal income log file: " .. metalIncomeFilename)
-    end
+    -- REMOVED: Metal income log file (metal income milestone notifications disabled)
 end
 
 function Logger.getDateFolder()
@@ -58,19 +48,13 @@ function Logger.log(messageType, pingText, valuesText, gameTime, formatTime)
             logFiles.queenDeath:flush()
         end
     elseif messageType == "metal_income" then
-        if logFiles.metalIncome then
-            logFiles.metalIncome:write(logEntry)
-            logFiles.metalIncome:flush()
-        end
+        -- REMOVED: Metal income milestone notifications disabled
+        -- No longer logging metal income milestones
     elseif messageType == "system" then
-        -- System messages go to both files
+        -- System messages go to queen death log
         if logFiles.queenDeath then
             logFiles.queenDeath:write(logEntry)
             logFiles.queenDeath:flush()
-        end
-        if logFiles.metalIncome then
-            logFiles.metalIncome:write(logEntry)
-            logFiles.metalIncome:flush()
         end
     end
 end
@@ -82,12 +66,7 @@ function Logger.shutdown()
         logFiles.queenDeath:close()
         logFiles.queenDeath = nil
     end
-    if logFiles.metalIncome then
-        logFiles.metalIncome:write("\n========================================\n")
-        logFiles.metalIncome:write("Ended: " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n")
-        logFiles.metalIncome:close()
-        logFiles.metalIncome = nil
-    end
+    -- REMOVED: Metal income log file shutdown (no longer created)
 end
 
 return Logger

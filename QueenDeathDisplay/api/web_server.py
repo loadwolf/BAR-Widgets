@@ -58,6 +58,8 @@ class QueenDeathDisplayHandler(http.server.SimpleHTTPRequestHandler):
             self.serve_json()
         elif path == "/api/status":
             self.serve_status()
+        elif path == "/api/export-csv":
+            self.serve_csv()
         elif path == "/favicon.ico":
             # Return empty 204 No Content for favicon requests to prevent 404 errors
             self.send_response(204)
@@ -184,6 +186,58 @@ class QueenDeathDisplayHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(json_str.encode('utf-8'))
+    
+    def serve_csv(self):
+        """Generate and serve CSV leaderboard file"""
+        try:
+            if not DATA_FILE.exists():
+                self.send_error(404, "No data file found")
+                return
+            
+            # Read JSON data
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            leaderboard = data.get('leaderboard', [])
+            
+            if len(leaderboard) == 0:
+                self.send_error(404, "No leaderboard data available")
+                return
+            
+            # Generate CSV content
+            import csv
+            import io
+            
+            output = io.StringIO()
+            writer = csv.writer(output)
+            
+            # Write header
+            writer.writerow(['Rank', 'Player Name', 'Team ID', 'Kills'])
+            
+            # Write leaderboard entries
+            for rank, entry in enumerate(leaderboard, 1):
+                player_name = entry.get('name', 'Unknown').replace(',', ' ')
+                team_id = entry.get('teamID', 0)
+                kills = entry.get('kills', 0)
+                writer.writerow([rank, player_name, int(team_id), int(kills)])
+            
+            csv_content = output.getvalue()
+            output.close()
+            
+            # Generate filename with timestamp
+            timestamp = time.strftime('%Y%m%d_%H%M%S', time.gmtime())
+            filename = f'queen_kills_leaderboard_{timestamp}.csv'
+            
+            # Send CSV file
+            self.send_response(200)
+            self.send_header('Content-type', 'text/csv; charset=utf-8')
+            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(csv_content.encode('utf-8'))
+            
+        except Exception as e:
+            self.send_error(500, f"Error generating CSV: {str(e)}")
     
     def log_message(self, format, *args):
         """Override to show all requests for debugging"""

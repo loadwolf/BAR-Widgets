@@ -21,19 +21,12 @@ local modulesLoaded = false
 -- Update tracking
 local lastUpdateTime = 0
 local frameCount = 0
-local exportCount = 0  -- Track export count for debugging
 local unitsScanned = false  -- Track if initial unit scan has been done
 
 -- Forward declare functions (defined later)
 local exportData
 
 function widget:Initialize()
-    -- Get Spring functions (now guaranteed to be available)
-    local GetGameSeconds = Spring.GetGameSeconds
-    local GetGameFrame = Spring.GetGameFrame
-    local GetSpectatingState = Spring.GetSpectatingState
-    local GetMyTeamID = Spring.GetMyTeamID
-    
     Spring.Echo("[Queen Death Display API] Widget initialized (v3.0 - Modular)")
     
     -- Load modules (VFS should be available in Initialize)
@@ -143,16 +136,6 @@ function widget:Initialize()
     
     Spring.Echo("[Queen Death Display API] All modules loaded successfully")
     
-    -- Report HarmonyRaptor loading status
-    if harmonyRaptorAvailable and HarmonyRaptor then
-        Spring.Echo("[Queen Death Display API] HarmonyRaptor loaded successfully")
-    else
-        Spring.Echo("[Queen Death Display API] ERROR: Failed to load HarmonyRaptor")
-        if harmonyRaptorError then
-            Spring.Echo("[Queen Death Display API] Error details: " .. harmonyRaptorError)
-        end
-    end
-    
     -- Initialize queen def IDs (after modules are loaded and Spring is available)
     local raptorQueenDefIDs = {}
     if Config and Config.QUEEN_UNIT_NAMES then
@@ -167,8 +150,7 @@ function widget:Initialize()
     -- Initialize data manager with queen def IDs
     DataManager.init(raptorQueenDefIDs)
     
-    -- Initialize logger
-    Logger.init(Config.LOG_DIR)
+    -- REMOVED: Logger initialization (logging disabled)
     
     -- Initialize timer manager
     TimerManager.init(HarmonyRaptor)
@@ -192,10 +174,10 @@ function widget:Initialize()
     
     -- Initialize API directory
     Spring.CreateDir(Config.API_DIR)
-    lastUpdateTime = GetGameSeconds() or 0
+    lastUpdateTime = Spring.GetGameSeconds() or 0
     
     -- Add initial system message
-    local now = GetGameSeconds()
+    local now = Spring.GetGameSeconds()
     DataManager.addDeathMessage({
         time = now,
         pingText = "Queen Death Display API - Widget Active",
@@ -209,11 +191,11 @@ function widget:Initialize()
         messageType = "system"
     })
     
-    Logger.log("system", "Widget initialized and ready", {"Web interface available"}, now, Utils.formatTime)
+    -- REMOVED: Logger.log call (logging disabled)
     
     -- Do an initial data export to verify everything is working (only if game has started)
-    local gameTime = GetGameSeconds()
-    local currentFrame = GetGameFrame()
+    local gameTime = Spring.GetGameSeconds()
+    local currentFrame = Spring.GetGameFrame()
     if gameTime and gameTime > 0 then
         -- Game is running - export immediately and scan units if needed
         exportData()
@@ -288,11 +270,7 @@ function widget:GameFrame(frame)
         local gameTime = Spring.GetGameSeconds()
         if gameTime and gameTime > 0 then
             exportData()
-        end
-        
-        local currentTime = Spring.GetGameSeconds()
-        if currentTime and currentTime > 0 then
-            lastUpdateTime = currentTime
+            lastUpdateTime = gameTime
         end
     end
     
@@ -307,16 +285,9 @@ function widget:GameFrame(frame)
     end
 end
 
--- UI button removed (was used to open the web interface)
-function widget:DrawScreen() end
-function widget:MousePress() return false end
-function widget:MouseMove() return false end
 
 function widget:Shutdown()
-    
-    if Logger then
-        Logger.shutdown()
-    end
+    -- REMOVED: Logger.shutdown() call (logging disabled)
     
     -- Clean up API file
     if Config then
@@ -341,9 +312,6 @@ function exportData()
         -- Game not started yet - this is normal in menu/lobby
         return
     end
-    
-    -- Track export count (for debugging if needed, but don't spam console)
-    exportCount = exportCount + 1
     
     -- Get timer info
     local graceRemaining, queenETA = TimerManager.getTimerInfo()

@@ -324,6 +324,12 @@
             </div>
             <div class="header-right">
                 <h1 style="margin: 0; text-align: right;">👑 Queen Death Display</h1>
+                <div style="display: flex; gap: 15px; align-items: center; margin-top: 10px; justify-content: flex-end;">
+                    <label style="display:flex; align-items:center; gap:8px; color:#9fe5ff; font-size:0.95em; user-select:none;">
+                        <input type="checkbox" id="tts-toggle" style="accent-color:#00e0c3;" />
+                        Voice timers
+                    </label>
+                </div>
                 <div class="status disconnected" id="status" style="margin-top: 10px; text-align: right;">Disconnected</div>
             </div>
         </header>
@@ -359,6 +365,30 @@
             <!-- Leaderboard -->
             <div class="card">
                 <h2>🏆 Kill Leaderboard</h2>
+                <div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(0, 255, 200, 0.15);">
+                    <button id="export-csv-btn" style="
+                        padding: 8px 16px;
+                        background: linear-gradient(135deg, rgba(0, 255, 200, 0.15), rgba(0, 200, 150, 0.1));
+                        border: 1px solid rgba(0, 255, 200, 0.4);
+                        border-radius: 8px;
+                        color: #7cfbff;
+                        font-size: 0.9em;
+                        font-weight: 600;
+                        cursor: pointer;
+                        transition: all 0.2s;
+                        width: 100%;
+                        margin-bottom: 8px;
+                    " onmouseover="this.style.background='linear-gradient(135deg, rgba(0, 255, 200, 0.25), rgba(0, 200, 150, 0.2)'; this.style.boxShadow='0 0 12px rgba(0, 255, 200, 0.3)'" 
+                       onmouseout="this.style.background='linear-gradient(135deg, rgba(0, 255, 200, 0.15), rgba(0, 200, 150, 0.1)'; this.style.boxShadow='none'">
+                        📥 Export CSV
+                    </button>
+                    <div id="csv-save-location" style="
+                        font-size: 0.75em;
+                        color: #9ba4b5;
+                        text-align: center;
+                        font-style: italic;
+                    ">Will save to your Downloads folder</div>
+                </div>
                 <div class="leaderboard" id="leaderboard">
                     <div class="no-data">No kills yet</div>
                 </div>
@@ -398,6 +428,7 @@
         let lastSpokenGraceMinutes = null;
         let lastSpokenEtaMinutes = null;
         let ttsAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window;
+        let ttsEnabled = false;
         
         function formatTime(seconds) {
             if (seconds === null || seconds === undefined || isNaN(seconds)) {
@@ -644,14 +675,14 @@
         }
 
         function speak(text) {
-            if (!ttsAvailable) return;
+            if (!ttsAvailable || !ttsEnabled) return;
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.rate = 1.0;
             window.speechSynthesis.speak(utterance);
         }
 
         function maybeSpeakTimers(graceRemaining, queenETA) {
-            if (!ttsAvailable) return;
+            if (!ttsAvailable || !ttsEnabled) return;
 
             // Speak no-rush every whole minute change
             if (graceRemaining !== null && graceRemaining !== undefined && !isNaN(graceRemaining) && graceRemaining > 0) {
@@ -720,6 +751,7 @@
             fetchData(); // Initial fetch
             updateTimer = setInterval(fetchData, UPDATE_INTERVAL);
             startCountdown(); // Start smooth countdown between updates
+            initTtsToggle();
         }
         
         function stopUpdates() {
@@ -745,6 +777,94 @@
                 stopUpdates();
             } else {
                 startUpdates();
+            }
+        });
+
+        function initTtsToggle() {
+            const toggle = document.getElementById('tts-toggle');
+            if (!toggle) return;
+
+            // Restore preference
+            const stored = localStorage.getItem('qdd-tts-enabled');
+            ttsEnabled = stored === 'true';
+            toggle.checked = ttsEnabled;
+
+            // Disable control if TTS not available
+            if (!ttsAvailable) {
+                toggle.disabled = true;
+                toggle.title = 'Text-to-speech not supported in this browser';
+            }
+
+            toggle.addEventListener('change', () => {
+                ttsEnabled = toggle.checked && ttsAvailable;
+                localStorage.setItem('qdd-tts-enabled', ttsEnabled);
+                // Clear last spoken markers so we speak once when re-enabled
+                lastSpokenGraceMinutes = null;
+                lastSpokenEtaMinutes = null;
+            });
+        }
+        
+        // CSV Export functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const exportBtn = document.getElementById('export-csv-btn');
+            const saveLocationDiv = document.getElementById('csv-save-location');
+            
+            if (exportBtn) {
+                exportBtn.addEventListener('click', async function() {
+                    try {
+                        const response = await fetch('/api/export-csv');
+                        if (!response.ok) {
+                            if (response.status === 404) {
+                                alert('No leaderboard data available to export');
+                                return;
+                            }
+                            throw new Error(`HTTP ${response.status}`);
+                        }
+                        
+                        // Get filename from Content-Disposition header or use default
+                        const contentDisposition = response.headers.get('Content-Disposition');
+                        let filename = 'queen_kills_leaderboard.csv';
+                        if (contentDisposition) {
+                            const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+                            if (filenameMatch) {
+                                filename = filenameMatch[1];
+                            }
+                        }
+                        
+                        // Update save location text
+                        if (saveLocationDiv) {
+                            saveLocationDiv.textContent = `Saved as: ${filename}`;
+                            saveLocationDiv.style.color = '#7cfbff';
+                            // Reset color after 3 seconds
+                            setTimeout(() => {
+                                saveLocationDiv.textContent = 'Will save to your Downloads folder';
+                                saveLocationDiv.style.color = '#9ba4b5';
+                            }, 3000);
+                        }
+                        
+                        // Download the file
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                    } catch (error) {
+                        console.error('Error exporting CSV:', error);
+                        alert('Failed to export CSV: ' + error.message);
+                        if (saveLocationDiv) {
+                            saveLocationDiv.textContent = 'Export failed';
+                            saveLocationDiv.style.color = '#ff6b6b';
+                            setTimeout(() => {
+                                saveLocationDiv.textContent = 'Will save to your Downloads folder';
+                                saveLocationDiv.style.color = '#9ba4b5';
+                            }, 3000);
+                        }
+                    }
+                });
             }
         });
     </script>

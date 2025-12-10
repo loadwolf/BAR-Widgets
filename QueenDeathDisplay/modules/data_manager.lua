@@ -57,7 +57,17 @@ function DataManager.getKillCount(teamID)
 end
 
 function DataManager.isQueenDefID(unitDefID)
-    return state.raptorQueenDefIDs[unitDefID] == true
+    if state.raptorQueenDefIDs[unitDefID] == true then
+        return true
+    end
+    -- Fallback: match by unit name prefix to be robust if defs change
+    if UnitDefs and unitDefID and UnitDefs[unitDefID] and UnitDefs[unitDefID].name then
+        local name = UnitDefs[unitDefID].name
+        if name:find("^raptor_queen") then
+            return true
+        end
+    end
+    return false
 end
 
 -- Messages

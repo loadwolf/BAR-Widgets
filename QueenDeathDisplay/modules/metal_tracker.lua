@@ -72,47 +72,6 @@ local function getTrackedTeamID()
     end
 end
 
-function MetalTracker.addNotification(income, threshold)
-    local now = Spring.GetGameSeconds()
-    local formattedIncome = Utils.formatMetalIncome(income)
-    local formattedThreshold = Utils.formatMetalIncome(threshold)
-    
-    local teamID = getTrackedTeamID()
-    local teamName = ""
-    if teamID then
-        teamName = Utils.getPlayerName(teamID) or ("Team " .. tostring(teamID))
-    end
-    
-    local pingText = string.format("Metal Income (%s): %s/s (Reached %s/s)", teamName, formattedIncome, formattedThreshold)
-    
-    -- Remove placeholder message if this is the first real notification
-    if not DataManager.getHasRealNotification() then
-        DataManager.setHasRealNotification(true)
-        local deathMessages = DataManager.getDeathMessages()
-        for i = #deathMessages, 1, -1 do
-            if deathMessages[i].messageType == "system" then
-                table.remove(deathMessages, i)
-            end
-        end
-    end
-    
-    DataManager.addDeathMessage({
-        time = now,
-        pingText = pingText,
-        valuesText = {},
-        killerName = nil,
-        killerCount = 0,
-        totalQueens = nil,
-        killedQueens = 0,
-        remaining = nil,
-        dismissed = false,
-        messageType = "metal_income"
-    })
-    
-    Spring.Echo("[Queen Death Display API] " .. pingText)
-    Logger.log("metal_income", pingText, {}, now, Utils.formatTime)
-end
-
 function MetalTracker.update(frame)
     if frame % Config.METAL_CHECK_INTERVAL ~= 0 then
         return
@@ -124,7 +83,6 @@ function MetalTracker.update(frame)
     end
     
     local trackedTeamID = DataManager.getTrackedTeamID()
-    local metalIncomeTriggered = DataManager.getMetalIncomeTriggered()
     local lastMetalAmount = DataManager.getLastMetalAmount()
     local lastMetalCheckTime = DataManager.getLastMetalCheckTime()
     
@@ -133,7 +91,6 @@ function MetalTracker.update(frame)
         DataManager.setTrackedTeamID(teamID)
         lastMetalAmount[teamID] = nil
         lastMetalCheckTime[teamID] = nil
-        metalIncomeTriggered[teamID] = {}
         
         local teamName = Utils.getPlayerName(teamID) or ("Team " .. tostring(teamID))
         local isSpectating = Spring.GetSpectatingState()
@@ -159,20 +116,7 @@ function MetalTracker.update(frame)
     local lastMetalCheckTime = DataManager.getLastMetalCheckTime()
     lastMetalCheckTime[teamID] = Spring.GetGameSeconds()
     
-    -- Initialize tracking for this team
-    if not metalIncomeTriggered[teamID] then
-        metalIncomeTriggered[teamID] = {}
-    end
-    
-    -- Check thresholds (per team)
-    local triggered = metalIncomeTriggered[teamID] or {}
-    for _, threshold in ipairs(Config.METAL_INCOME_THRESHOLDS) do
-        if incomeRate >= threshold and not triggered[threshold] then
-            triggered[threshold] = true
-            MetalTracker.addNotification(incomeRate, threshold)
-        end
-    end
-    metalIncomeTriggered[teamID] = triggered
+    -- REMOVED: Threshold checking and notifications (metal income milestones disabled)
 end
 
 return MetalTracker

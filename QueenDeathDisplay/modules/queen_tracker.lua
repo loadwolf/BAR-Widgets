@@ -20,16 +20,27 @@ function QueenTracker.onUnitDestroyed(unitID, unitDefID, unitTeam, attackerID, a
     -- Get position
     local x, y, z = Spring.GetUnitPosition(unitID)
     
-    -- Resolve killer team with fallbacks
+    -- Resolve killer team with aggressive fallbacks
     local killerTeam = attackerTeam
     if (not killerTeam or killerTeam < 0) and attackerID and attackerID > 0 then
         killerTeam = Spring.GetUnitTeam(attackerID)
     end
-    
-    -- Record kill first
-    if killerTeam and killerTeam >= 0 then
-        DataManager.addKill(killerTeam)
+    if (not killerTeam or killerTeam < 0) and Spring.GetUnitLastAttacker then
+        local lastAttacker = Spring.GetUnitLastAttacker(unitID)
+        if lastAttacker and lastAttacker > 0 then
+            killerTeam = Spring.GetUnitTeam(lastAttacker)
+            if (not attackerID or attackerID <= 0) then
+                attackerID = lastAttacker
+            end
+        end
     end
+    -- Use sentinel team for unknown so counts/leaderboard still show
+    if not killerTeam or killerTeam < 0 then
+        killerTeam = -2
+    end
+    
+    -- Record kill
+    DataManager.addKill(killerTeam)
     
     -- Try multiple methods to get killer name
     local killerName = nil

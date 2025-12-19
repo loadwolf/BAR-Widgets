@@ -1,4 +1,11 @@
+1) LayoutPlannerPlus 
+2) QueenDeathDisplay
+
+
+
+-------------------------------------------
 LayoutPlannerPlus 
+-------------------------------------------
 This is the save and load feature with htumbnail that I always wished existed when creating bar layouts. 
 
 Al credit to Noryon the LayoutPlanner for the base that we have expanded on here.
@@ -25,3 +32,12 @@ Done
  - Render speed bug for large shapes - Done 2025-12-02
  - move layout around with ASDW keys - Done 2025-12-02
  - Fix button click location offset error - Done 2025-12-02
+
+-------------------------------------------
+QueenDeathDisplay
+-------------------------------------------
+work in progress
+Aim to have a webpage that run on second screen displaying stats. aggro, metal, energy, BP levels, queen kill table and also ping who killed what queen and when and what sequence
+
+(requires starting server for webpage to show - QueenDeathDisplay\api\start_server.bat)
+(QueenDeathDisplay\queen_death_display.lua this one will  ping queen even if webpage not started)

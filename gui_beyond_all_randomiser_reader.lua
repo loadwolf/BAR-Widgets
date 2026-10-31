@@ -68,7 +68,8 @@ local MAX_ROWS = 5
 local PAD = 8
 
 local panelX = 40
-local panelY = 170
+-- The panel position is its title bar's top-left corner. Rows extend down.
+local panelTopY = 0
 local panelH = HEADER_H + TOOLBAR_H + PAD * 2 + FOOTER_H + ROW_H * 4
 local viewW, viewH = Spring.GetViewGeometry()
 local hasSavedPosition = false
@@ -480,13 +481,14 @@ end
 local function clampPanel()
 	viewW, viewH = Spring.GetViewGeometry()
 	panelX = clamp(panelX, 0, math.max(0, viewW - PANEL_W))
-	panelY = clamp(panelY, 0, math.max(0, viewH - panelH))
+	panelTopY = clamp(panelTopY, math.min(panelH, viewH), viewH)
 end
 
 function widget:Initialize()
 	viewW, viewH = Spring.GetViewGeometry()
 	if not hasSavedPosition then
 		panelX = math.max(20, viewW - PANEL_W - 24)
+		panelTopY = math.max(panelH, viewH - 90)
 	end
 	clampPanel()
 	refreshRows()
@@ -518,7 +520,7 @@ function widget:DrawScreen()
 	scrollOffset = clamp(scrollOffset, 0, math.max(0, #shown - MAX_ROWS))
 	clampPanel()
 
-	local x, y = panelX, panelY
+	local x, y = panelX, panelTopY - panelH
 	drawRect(x, y, PANEL_W, panelH, 0.025, 0.035, 0.055, 0.94)
 	drawRect(x, y + panelH - HEADER_H, PANEL_W, HEADER_H, 0.075, 0.12, 0.17, 0.98)
 	drawRect(x, y + panelH - 2, PANEL_W, 2, 0.26, 0.53, 0.72, 1)
@@ -589,17 +591,18 @@ function widget:DrawScreen()
 end
 
 function widget:MousePress(x, y, button)
-	if button ~= 1 or not inRect(x, y, panelX, panelY, PANEL_W, panelH) then return false end
+	local panelBottomY = panelTopY - panelH
+	if button ~= 1 or not inRect(x, y, panelX, panelBottomY, PANEL_W, panelH) then return false end
 
-	local headerBottom = panelY + panelH - HEADER_H
+	local headerBottom = panelTopY - HEADER_H
 	if y >= headerBottom then
 		dragging = true
 		dragOffsetX = x - panelX
-		dragOffsetY = y - panelY
+		dragOffsetY = panelTopY - y
 		return true
 	end
 
-	local toolbarY = panelY + panelH - HEADER_H - TOOLBAR_H
+	local toolbarY = panelTopY - HEADER_H - TOOLBAR_H
 	if y >= toolbarY and y <= toolbarY + TOOLBAR_H then
 		local controlW = 118
 		if x <= panelX + PAD + controlW then
@@ -621,7 +624,7 @@ end
 function widget:MouseMove(x, y)
 	if not dragging then return false end
 	panelX = x - dragOffsetX
-	panelY = y - dragOffsetY
+	panelTopY = y + dragOffsetY
 	clampPanel()
 	return true
 end
@@ -634,7 +637,7 @@ end
 
 function widget:MouseWheel(up, value)
 	local mx, my = Spring.GetMouseState()
-	if not inRect(mx, my, panelX, panelY, PANEL_W, panelH) then return false end
+	if not inRect(mx, my, panelX, panelTopY - panelH, PANEL_W, panelH) then return false end
 	local shown = visibleRows()
 	local maxOffset = math.max(0, #shown - MAX_ROWS)
 	local step = math.max(1, math.floor(value or 1))
@@ -649,7 +652,7 @@ end
 function widget:GetConfigData()
 	return {
 		panelX = panelX,
-		panelY = panelY,
+		panelTopY = panelTopY,
 		typeFilterIndex = typeFilterIndex,
 		rarityFilterIndex = rarityFilterIndex,
 		sortIndex = sortIndex,
@@ -659,8 +662,13 @@ end
 function widget:SetConfigData(data)
 	if type(data) ~= "table" then return end
 	if tonumber(data.panelX) then panelX = tonumber(data.panelX) end
-	if tonumber(data.panelY) then panelY = tonumber(data.panelY) end
-	if tonumber(data.panelX) or tonumber(data.panelY) then hasSavedPosition = true end
+	if tonumber(data.panelTopY) then
+		panelTopY = tonumber(data.panelTopY)
+	elseif tonumber(data.panelY) then
+		-- Convert the older bottom-left saved coordinate to the new title anchor.
+		panelTopY = tonumber(data.panelY) + panelH
+	end
+	if tonumber(data.panelX) or tonumber(data.panelTopY) or tonumber(data.panelY) then hasSavedPosition = true end
 	if tonumber(data.typeFilterIndex) then typeFilterIndex = clamp(math.floor(data.typeFilterIndex), 1, #TYPE_FILTERS) end
 	if tonumber(data.rarityFilterIndex) then
 		rarityFilterIndex = clamp(math.floor(data.rarityFilterIndex), 1, #RARITY_FILTERS)
